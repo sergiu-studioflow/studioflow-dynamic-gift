@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Eye, Palette, MessageSquareText, Zap } from "lucide-react";
+import { ChevronDown, ChevronUp, Palette, MessageSquareText, Zap } from "lucide-react";
 import type { ContentIdea } from "@/lib/types";
 
 const TYPE_COLORS: Record<string, string> = {
@@ -41,6 +41,7 @@ type IdeaCardProps = {
 };
 
 export function IdeaCard({ idea, onStatusChange }: IdeaCardProps) {
+  const [expanded, setExpanded] = useState(false);
   const [updating, setUpdating] = useState(false);
 
   async function handleStatusChange(newStatus: string) {
@@ -64,8 +65,15 @@ export function IdeaCard({ idea, onStatusChange }: IdeaCardProps) {
   };
 
   return (
-    <Card className="transition-all duration-200 hover:border-primary/20 hover:shadow-md">
-      <CardContent className="space-y-4 pt-5 pb-5">
+    <Card
+      className={`transition-all duration-200 cursor-pointer ${
+        expanded
+          ? "ring-1 ring-primary/30 shadow-md"
+          : "hover:border-primary/20 hover:shadow-sm"
+      }`}
+      onClick={() => setExpanded(!expanded)}
+    >
+      <CardContent className="space-y-3 pt-4 pb-3">
         {/* Header: type badge + platform + status */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 flex-wrap">
@@ -79,76 +87,82 @@ export function IdeaCard({ idea, onStatusChange }: IdeaCardProps) {
               {platform.label}
             </span>
           </div>
-          <Select
-            value={idea.status}
-            onValueChange={handleStatusChange}
-            disabled={updating}
-          >
-            <SelectTrigger
-              className={`h-7 w-[100px] text-[11px] font-medium border-0 bg-transparent ${STATUS_STYLES[idea.status] || ""}`}
+          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+            <Select
+              value={idea.status}
+              onValueChange={handleStatusChange}
+              disabled={updating}
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="new">New</SelectItem>
-              <SelectItem value="approved">Approved</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
-              <SelectItem value="saved">Saved</SelectItem>
-            </SelectContent>
-          </Select>
+              <SelectTrigger
+                className={`h-7 w-[100px] text-[11px] font-medium border-0 bg-transparent ${STATUS_STYLES[idea.status] || ""}`}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="new">New</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
+                <SelectItem value="saved">Saved</SelectItem>
+              </SelectContent>
+            </Select>
+            {expanded ? (
+              <ChevronUp className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            )}
+          </div>
         </div>
 
-        {/* Hook — the headline */}
+        {/* Hook */}
         <p className="text-[15px] font-bold leading-snug text-foreground tracking-tight">
           &ldquo;{idea.hook}&rdquo;
         </p>
 
-        {/* Suggested Angle — full display */}
-        <p className="text-sm text-muted-foreground leading-relaxed">
+        {/* Angle — clamped when collapsed, full when expanded */}
+        <p className={`text-sm text-muted-foreground leading-relaxed ${expanded ? "" : "line-clamp-2"}`}>
           {idea.suggestedAngle}
         </p>
 
-        {/* Detail sections */}
-        <div className="space-y-3 border-t border-border pt-4">
-          {/* Visual Direction */}
-          {idea.visualDirection && (
-            <div className="flex gap-2.5">
-              <Palette className="h-4 w-4 text-primary/60 mt-0.5 flex-shrink-0" />
-              <div>
-                <span className="text-xs font-semibold text-foreground">Visual Direction</span>
-                <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
-                  {idea.visualDirection}
-                </p>
+        {/* Expanded details */}
+        {expanded && (
+          <div className="space-y-3 border-t border-border pt-4 animate-in fade-in slide-in-from-top-1 duration-200">
+            {idea.visualDirection && (
+              <div className="flex gap-2.5">
+                <Palette className="h-4 w-4 text-primary/60 mt-0.5 flex-shrink-0" />
+                <div>
+                  <span className="text-xs font-semibold text-foreground">Visual Direction</span>
+                  <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                    {idea.visualDirection}
+                  </p>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Core Value Props */}
-          {idea.coreValueProps && (
-            <div className="flex gap-2.5">
-              <Zap className="h-4 w-4 text-primary/60 mt-0.5 flex-shrink-0" />
-              <div>
-                <span className="text-xs font-semibold text-foreground">Value Props</span>
-                <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
-                  {idea.coreValueProps}
-                </p>
+            {idea.coreValueProps && (
+              <div className="flex gap-2.5">
+                <Zap className="h-4 w-4 text-primary/60 mt-0.5 flex-shrink-0" />
+                <div>
+                  <span className="text-xs font-semibold text-foreground">Value Props</span>
+                  <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                    {idea.coreValueProps}
+                  </p>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Copy Direction */}
-          {idea.copyDirection && (
-            <div className="flex gap-2.5">
-              <MessageSquareText className="h-4 w-4 text-primary/60 mt-0.5 flex-shrink-0" />
-              <div>
-                <span className="text-xs font-semibold text-foreground">Copy Direction</span>
-                <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
-                  {idea.copyDirection}
-                </p>
+            {idea.copyDirection && (
+              <div className="flex gap-2.5">
+                <MessageSquareText className="h-4 w-4 text-primary/60 mt-0.5 flex-shrink-0" />
+                <div>
+                  <span className="text-xs font-semibold text-foreground">Copy Direction</span>
+                  <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                    {idea.copyDirection}
+                  </p>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

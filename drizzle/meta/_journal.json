@@ -8,6 +8,13 @@
       "when": 1741305600000,
       "tag": "0000_core_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1773308110118,
+      "tag": "0001_lonely_rick_jones",
+      "breakpoints": true
     }
   ]
 }

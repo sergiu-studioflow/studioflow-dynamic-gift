@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Brain,
+  Lightbulb,
   Settings,
   LogOut,
 } from "lucide-react";
@@ -22,7 +23,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Brand Intelligence", href: "/brand-intelligence", icon: Brain },
-  // ADD SYSTEM NAV ITEMS HERE DURING MIGRATE
+  { name: "Content Ideation", href: "/content-ideation", icon: Lightbulb },
 ];
 
 type PortalSidebarProps = {

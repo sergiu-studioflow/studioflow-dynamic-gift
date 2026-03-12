@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, timestamp, uuid, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, timestamp, uuid, jsonb, integer } from "drizzle-orm/pg-core";
 
 // =============================================
 // BETTER AUTH TABLES (managed by better-auth — do not modify manually)
@@ -94,6 +94,43 @@ export const brandIntelligence = pgTable("brand_intelligence", {
   airtableRecordId: text("airtable_record_id"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// =============================================
+// ACTIVITY LOG (generic — all portals)
+// =============================================
+
+// =============================================
+// CONTENT IDEATION SYSTEM
+// =============================================
+
+export const ideationRequests = pgTable("ideation_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  brand: text("brand").notNull(),
+  direction: text("direction").notNull(),
+  contentTypes: jsonb("content_types").notNull(),
+  numberOfIdeas: integer("number_of_ideas").notNull().default(25),
+  additionalContext: text("additional_context"),
+  status: text("status").notNull().default("new"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const contentIdeas = pgTable("content_ideas", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  requestId: uuid("request_id").notNull().references(() => ideationRequests.id, { onDelete: "cascade" }),
+  hook: text("hook").notNull(),
+  contentType: text("content_type").notNull(),
+  suggestedAngle: text("suggested_angle").notNull(),
+  visualDirection: text("visual_direction").notNull(),
+  platformRecommendation: text("platform_recommendation").notNull(),
+  coreValueProps: text("core_value_props"),
+  copyDirection: text("copy_direction"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  status: text("status").notNull().default("new"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // =============================================

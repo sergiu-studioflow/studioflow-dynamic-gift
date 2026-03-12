@@ -23,6 +23,40 @@ export type AppConfig = {
   workflows: Record<string, { webhook_path: string; n8n_base_url?: string }>;
 };
 
+// Content Ideation System
+export type IdeationRequest = {
+  id: string;
+  brand: string;
+  direction: string;
+  contentTypes: string[];
+  numberOfIdeas: number;
+  additionalContext: string | null;
+  status: string;
+  errorMessage: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type ContentIdea = {
+  id: string;
+  requestId: string;
+  hook: string;
+  contentType: string;
+  suggestedAngle: string;
+  visualDirection: string;
+  platformRecommendation: string;
+  coreValueProps: string | null;
+  copyDirection: string | null;
+  sortOrder: number;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type IdeationRequestWithIdeas = IdeationRequest & {
+  ideas: ContentIdea[];
+};
+
 export type BrandIntelligence = {
   id: string;
   title: string;

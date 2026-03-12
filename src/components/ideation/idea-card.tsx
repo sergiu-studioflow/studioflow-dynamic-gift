@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -11,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { Eye, Palette, MessageSquareText, Zap } from "lucide-react";
 import type { ContentIdea } from "@/lib/types";
 
 const TYPE_COLORS: Record<string, string> = {
@@ -23,10 +22,10 @@ const TYPE_COLORS: Record<string, string> = {
   "Case Study": "bg-rose-500/15 text-rose-600 dark:text-rose-400",
 };
 
-const PLATFORM_EMOJI: Record<string, string> = {
-  Facebook: "f",
-  Instagram: "ig",
-  LinkedIn: "in",
+const PLATFORM_STYLES: Record<string, { label: string; className: string }> = {
+  Facebook: { label: "Facebook", className: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+  Instagram: { label: "Instagram", className: "bg-pink-500/10 text-pink-600 dark:text-pink-400" },
+  LinkedIn: { label: "LinkedIn", className: "bg-sky-500/10 text-sky-600 dark:text-sky-400" },
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -42,7 +41,6 @@ type IdeaCardProps = {
 };
 
 export function IdeaCard({ idea, onStatusChange }: IdeaCardProps) {
-  const [expanded, setExpanded] = useState(false);
   const [updating, setUpdating] = useState(false);
 
   async function handleStatusChange(newStatus: string) {
@@ -60,20 +58,25 @@ export function IdeaCard({ idea, onStatusChange }: IdeaCardProps) {
     setUpdating(false);
   }
 
+  const platform = PLATFORM_STYLES[idea.platformRecommendation] || {
+    label: idea.platformRecommendation,
+    className: "bg-muted text-muted-foreground",
+  };
+
   return (
-    <Card className="transition-all duration-150 hover:border-primary/20">
-      <CardContent className="space-y-3 pt-4 pb-3">
+    <Card className="transition-all duration-200 hover:border-primary/20 hover:shadow-md">
+      <CardContent className="space-y-4 pt-5 pb-5">
         {/* Header: type badge + platform + status */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 flex-wrap">
             <Badge
               variant="secondary"
-              className={`text-[10px] px-1.5 py-0 ${TYPE_COLORS[idea.contentType] || ""}`}
+              className={`text-[11px] px-2 py-0.5 font-medium ${TYPE_COLORS[idea.contentType] || ""}`}
             >
               {idea.contentType}
             </Badge>
-            <span className="text-[10px] font-mono uppercase text-muted-foreground rounded bg-muted px-1.5 py-0.5">
-              {PLATFORM_EMOJI[idea.platformRecommendation] || idea.platformRecommendation}
+            <span className={`text-[11px] font-medium rounded-md px-2 py-0.5 ${platform.className}`}>
+              {platform.label}
             </span>
           </div>
           <Select
@@ -82,7 +85,7 @@ export function IdeaCard({ idea, onStatusChange }: IdeaCardProps) {
             disabled={updating}
           >
             <SelectTrigger
-              className={`h-6 w-24 text-[10px] border-0 bg-transparent ${STATUS_STYLES[idea.status] || ""}`}
+              className={`h-7 w-[100px] text-[11px] font-medium border-0 bg-transparent ${STATUS_STYLES[idea.status] || ""}`}
             >
               <SelectValue />
             </SelectTrigger>
@@ -95,57 +98,57 @@ export function IdeaCard({ idea, onStatusChange }: IdeaCardProps) {
           </Select>
         </div>
 
-        {/* Hook */}
-        <p className="text-sm font-semibold leading-snug text-foreground">
-          {idea.hook}
+        {/* Hook — the headline */}
+        <p className="text-[15px] font-bold leading-snug text-foreground tracking-tight">
+          &ldquo;{idea.hook}&rdquo;
         </p>
 
-        {/* Angle */}
-        <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+        {/* Suggested Angle — full display */}
+        <p className="text-sm text-muted-foreground leading-relaxed">
           {idea.suggestedAngle}
         </p>
 
-        {/* Expand toggle */}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setExpanded(!expanded)}
-          className="h-6 px-2 text-[11px] text-muted-foreground"
-        >
-          {expanded ? (
-            <>
-              <ChevronUp className="mr-1 h-3 w-3" />
-              Less
-            </>
-          ) : (
-            <>
-              <ChevronDown className="mr-1 h-3 w-3" />
-              More
-            </>
-          )}
-        </Button>
-
-        {/* Expanded details */}
-        {expanded && (
-          <div className="space-y-2.5 border-t border-border pt-3 text-xs">
-            <div>
-              <span className="font-medium text-foreground">Visual Direction:</span>
-              <p className="mt-0.5 text-muted-foreground">{idea.visualDirection}</p>
+        {/* Detail sections */}
+        <div className="space-y-3 border-t border-border pt-4">
+          {/* Visual Direction */}
+          {idea.visualDirection && (
+            <div className="flex gap-2.5">
+              <Palette className="h-4 w-4 text-primary/60 mt-0.5 flex-shrink-0" />
+              <div>
+                <span className="text-xs font-semibold text-foreground">Visual Direction</span>
+                <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                  {idea.visualDirection}
+                </p>
+              </div>
             </div>
-            {idea.coreValueProps && (
+          )}
+
+          {/* Core Value Props */}
+          {idea.coreValueProps && (
+            <div className="flex gap-2.5">
+              <Zap className="h-4 w-4 text-primary/60 mt-0.5 flex-shrink-0" />
               <div>
-                <span className="font-medium text-foreground">Core Value Props:</span>
-                <p className="mt-0.5 text-muted-foreground">{idea.coreValueProps}</p>
+                <span className="text-xs font-semibold text-foreground">Value Props</span>
+                <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                  {idea.coreValueProps}
+                </p>
               </div>
-            )}
-            {idea.copyDirection && (
+            </div>
+          )}
+
+          {/* Copy Direction */}
+          {idea.copyDirection && (
+            <div className="flex gap-2.5">
+              <MessageSquareText className="h-4 w-4 text-primary/60 mt-0.5 flex-shrink-0" />
               <div>
-                <span className="font-medium text-foreground">Copy Direction:</span>
-                <p className="mt-0.5 text-muted-foreground">{idea.copyDirection}</p>
+                <span className="text-xs font-semibold text-foreground">Copy Direction</span>
+                <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                  {idea.copyDirection}
+                </p>
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Client Portal",
-  description: "StudioFlow client portal",
+  title: "Dynamic Gift Creative Studio",
+  description: "Dynamic Gift AI-powered creative production portal by StudioFlow",
 };
 
 export default function RootLayout({

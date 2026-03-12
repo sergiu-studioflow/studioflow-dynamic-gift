@@ -33,7 +33,7 @@ export default function DashboardPage() {
       <div className="animate-fade-up">
         <h1 className="text-4xl font-bold tracking-tight text-foreground">Dashboard</h1>
         <p className="mt-2 text-base text-muted-foreground">
-          Your AI-powered creative production systems
+          Dynamic Gift&apos;s AI-powered creative production systems
         </p>
       </div>
 

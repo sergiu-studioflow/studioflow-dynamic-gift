@@ -10,7 +10,7 @@ export default function BrandIntelligencePage() {
           Brand Intelligence
         </h1>
         <p className="mt-2 text-base text-muted-foreground">
-          View and manage the brand knowledge base and intelligence documents.
+          View and manage Dynamic Gift&apos;s brand knowledge base and intelligence documents.
         </p>
       </div>
 

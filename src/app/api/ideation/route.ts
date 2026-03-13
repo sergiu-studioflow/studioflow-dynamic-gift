@@ -1,21 +1,10 @@
 import { db, schema } from "@/lib/db";
 import { requireAuth, isAuthError } from "@/lib/auth";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod/v4";
 
 export const dynamic = "force-dynamic";
-
-const BRANDS = [
-  "Dynamic Gift",
-  "Indigenous Promotions",
-  "Event Display",
-  "Lanyards Factory",
-  "Pin Factory",
-  "Inflatable Promotions",
-  "Promo Superstore",
-  "The Medal Factory",
-] as const;
 
 const CONTENT_TYPES = [
   "Review/Testimonial",
@@ -27,7 +16,7 @@ const CONTENT_TYPES = [
 ] as const;
 
 const createRequestSchema = z.object({
-  brand: z.enum(BRANDS),
+  brand: z.string().min(1),
   direction: z.string().min(1),
   contentTypes: z.array(z.enum(CONTENT_TYPES)).min(1),
   numberOfIdeas: z.number().int().min(5).max(30).default(25),
@@ -55,6 +44,19 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.format() },
+      { status: 400 }
+    );
+  }
+
+  // Validate brand exists in DB
+  const activeBrands = await db
+    .select({ name: schema.brands.name })
+    .from(schema.brands)
+    .where(eq(schema.brands.isActive, true));
+  const validBrandNames = activeBrands.map((b) => b.name);
+  if (!validBrandNames.includes(parsed.data.brand)) {
+    return NextResponse.json(
+      { error: `Invalid brand: "${parsed.data.brand}". Available: ${validBrandNames.join(", ")}` },
       { status: 400 }
     );
   }

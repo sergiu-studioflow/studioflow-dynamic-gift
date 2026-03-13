@@ -15,6 +15,13 @@
       "when": 1773308110118,
       "tag": "0001_lonely_rick_jones",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1773567600000,
+      "tag": "0002_brands_table",
+      "breakpoints": true
     }
   ]
 }

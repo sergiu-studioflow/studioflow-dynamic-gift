@@ -1,4 +1,5 @@
 import { BrandDocSection } from "@/components/brand-intel/brand-doc-section";
+import { BrandsManager } from "@/components/brand-intel/brands-manager";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ export default function BrandIntelligencePage() {
         </p>
       </div>
 
+      <BrandsManager />
       <BrandDocSection />
     </div>
   );

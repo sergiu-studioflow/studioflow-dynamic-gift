@@ -97,8 +97,17 @@ export const brandIntelligence = pgTable("brand_intelligence", {
 });
 
 // =============================================
-// ACTIVITY LOG (generic — all portals)
+// BRANDS (client-managed brand list)
 // =============================================
+
+export const brands = pgTable("brands", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // =============================================
 // CONTENT IDEATION SYSTEM

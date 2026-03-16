@@ -1,0 +1,55 @@
+-- Video Brief + Script System tables
+-- Dynamic Gift - Phase 2
+
+CREATE TABLE IF NOT EXISTS video_brief_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  brand text NOT NULL,
+  request_label text,
+  content_type text,
+  platform text,
+  target_persona text,
+  funnel_stage text,
+  duration text,
+  hook_style text,
+  scenario_direction text,
+  product_focus text,
+  value_prop_focus text,
+  number_of_hooks integer DEFAULT 5,
+  additional_context text,
+  status text DEFAULT 'submitted',
+  error_message text,
+  created_at timestamptz DEFAULT NOW(),
+  updated_at timestamptz DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS generated_video_briefs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id uuid REFERENCES video_brief_requests(id),
+  brief_title text,
+  strategic_hypothesis text,
+  psychology_angle text,
+  target_persona text,
+  funnel_stage text,
+  content_type text,
+  platform text,
+  duration text,
+  primary_hook text,
+  hook_variations jsonb,
+  full_script text,
+  scene_breakdown text,
+  shot_list text,
+  visual_direction text,
+  audio_direction text,
+  music_direction text,
+  on_screen_text text,
+  talent_notes text,
+  location_requirements text,
+  b_roll_guidance text,
+  brand_voice_lock text,
+  value_prop_focus text,
+  compliance_notes text,
+  ai_generation_notes text,
+  status text DEFAULT 'pending_review',
+  created_at timestamptz DEFAULT NOW(),
+  updated_at timestamptz DEFAULT NOW()
+);

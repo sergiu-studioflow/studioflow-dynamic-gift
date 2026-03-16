@@ -143,6 +143,63 @@ export const contentIdeas = pgTable("content_ideas", {
 });
 
 // =============================================
+// VIDEO BRIEF + SCRIPT SYSTEM
+// =============================================
+
+export const videoBriefRequests = pgTable("video_brief_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  brand: text("brand").notNull(),
+  requestLabel: text("request_label"),
+  contentType: text("content_type"),
+  platform: text("platform"),
+  targetPersona: text("target_persona"),
+  funnelStage: text("funnel_stage"),
+  duration: text("duration"),
+  hookStyle: text("hook_style"),
+  scenarioDirection: text("scenario_direction"),
+  productFocus: text("product_focus"),
+  valuePropFocus: text("value_prop_focus"),
+  numberOfHooks: integer("number_of_hooks").default(5),
+  additionalContext: text("additional_context"),
+  status: text("status").notNull().default("submitted"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const generatedVideoBriefs = pgTable("generated_video_briefs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  requestId: uuid("request_id").references(() => videoBriefRequests.id),
+  briefTitle: text("brief_title"),
+  strategicHypothesis: text("strategic_hypothesis"),
+  psychologyAngle: text("psychology_angle"),
+  targetPersona: text("target_persona"),
+  funnelStage: text("funnel_stage"),
+  contentType: text("content_type"),
+  platform: text("platform"),
+  duration: text("duration"),
+  primaryHook: text("primary_hook"),
+  hookVariations: jsonb("hook_variations"),
+  fullScript: text("full_script"),
+  sceneBreakdown: text("scene_breakdown"),
+  shotList: text("shot_list"),
+  visualDirection: text("visual_direction"),
+  audioDirection: text("audio_direction"),
+  musicDirection: text("music_direction"),
+  onScreenText: text("on_screen_text"),
+  talentNotes: text("talent_notes"),
+  locationRequirements: text("location_requirements"),
+  bRollGuidance: text("b_roll_guidance"),
+  brandVoiceLock: text("brand_voice_lock"),
+  valuePropFocus: text("value_prop_focus"),
+  complianceNotes: text("compliance_notes"),
+  aiGenerationNotes: text("ai_generation_notes"),
+  status: text("status").notNull().default("pending_review"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// =============================================
 // ACTIVITY LOG (generic — all portals)
 // =============================================
 

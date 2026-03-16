@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Brain,
   Lightbulb,
+  Video,
   Settings,
   LogOut,
 } from "lucide-react";
@@ -24,6 +25,7 @@ const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Brand Intelligence", href: "/brand-intelligence", icon: Brain },
   { name: "Content Ideation", href: "/content-ideation", icon: Lightbulb },
+  { name: "Video Brief", href: "/video-brief", icon: Video },
 ];
 
 type PortalSidebarProps = {

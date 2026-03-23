@@ -125,6 +125,51 @@ export type VideoBriefRequestWithBriefs = VideoBriefRequest & {
   briefs: GeneratedVideoBrief[];
 };
 
+// Ad Copy Generation System
+export type AdCopyRequest = {
+  id: string;
+  brand: string;
+  campaignObjective: string;
+  targetPersona: string;
+  productFocus: string | null;
+  angleEmphasis: string[];
+  adFormat: string;
+  toneVariation: string | null;
+  numberOfConcepts: number;
+  additionalContext: string | null;
+  status: string;
+  errorMessage: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type GeneratedAdCopy = {
+  id: string;
+  requestId: string;
+  conceptNumber: number;
+  conceptName: string | null;
+  conceptStrategy: string | null;
+  anglesUsed: string[] | null;
+  primaryTextShort: string | null;
+  primaryTextMedium: string | null;
+  primaryTextLong: string | null;
+  headlines: { text: string; char_count: number }[] | null;
+  descriptions: { text: string; char_count: number }[] | null;
+  hookLines: { text: string; length_variant: string }[] | null;
+  ctaRecommendation: string | null;
+  abTestingNotes: string | null;
+  complianceStatus: string;
+  complianceNotes: string | null;
+  sortOrder: number;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type AdCopyRequestWithConcepts = AdCopyRequest & {
+  concepts: GeneratedAdCopy[];
+};
+
 export type BrandIntelligence = {
   id: string;
   title: string;

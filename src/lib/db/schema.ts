@@ -200,6 +200,50 @@ export const generatedVideoBriefs = pgTable("generated_video_briefs", {
 });
 
 // =============================================
+// AD COPY GENERATION SYSTEM
+// =============================================
+
+export const adCopyRequests = pgTable("ad_copy_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  brand: text("brand").notNull(),
+  campaignObjective: text("campaign_objective").notNull(),
+  targetPersona: text("target_persona").notNull(),
+  productFocus: text("product_focus"),
+  angleEmphasis: jsonb("angle_emphasis").notNull().default([]),
+  adFormat: text("ad_format").notNull(),
+  toneVariation: text("tone_variation"),
+  numberOfConcepts: integer("number_of_concepts").notNull().default(3),
+  additionalContext: text("additional_context"),
+  status: text("status").notNull().default("new"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const generatedAdCopy = pgTable("generated_ad_copy", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  requestId: uuid("request_id").notNull().references(() => adCopyRequests.id, { onDelete: "cascade" }),
+  conceptNumber: integer("concept_number").notNull(),
+  conceptName: text("concept_name"),
+  conceptStrategy: text("concept_strategy"),
+  anglesUsed: jsonb("angles_used"),
+  primaryTextShort: text("primary_text_short"),
+  primaryTextMedium: text("primary_text_medium"),
+  primaryTextLong: text("primary_text_long"),
+  headlines: jsonb("headlines"),
+  descriptions: jsonb("descriptions"),
+  hookLines: jsonb("hook_lines"),
+  ctaRecommendation: text("cta_recommendation"),
+  abTestingNotes: text("ab_testing_notes"),
+  complianceStatus: text("compliance_status").notNull().default("passed"),
+  complianceNotes: text("compliance_notes"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  status: text("status").notNull().default("new"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// =============================================
 // ACTIVITY LOG (generic — all portals)
 // =============================================
 

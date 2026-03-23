@@ -1,4 +1,4 @@
-import { Brain, Lightbulb, Sparkles, Lock } from "lucide-react";
+import { Brain, Lightbulb, Video, Megaphone, Image, Linkedin, Star, Lock } from "lucide-react";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -18,19 +18,40 @@ export default function DashboardPage() {
       description: "Brand knowledge base, positioning documents, and strategic intelligence",
     },
     {
-      name: "Content Ideation",
+      name: "Content Ideation System",
       href: "/content-ideation",
       icon: Lightbulb,
       description: "Generate 20-30 differentiated content ideas per batch across all 8 brands",
     },
+    {
+      name: "Video Brief + Script System",
+      href: "/video-brief",
+      icon: Video,
+      description: "Production-ready video briefs with timed scripts, hook variations, and shot lists",
+    },
+    {
+      name: "Ad Copy Generation",
+      href: "/ad-copy",
+      icon: Megaphone,
+      description: "Complete Meta ad copy sets with multiple variations per concept for A/B testing",
+    },
   ];
 
   const plannedSystems = [
-    // Placeholder — replace with real system cards after migration
     {
-      name: "Coming Soon",
-      icon: Sparkles,
-      description: "Your next AI-powered system will appear here",
+      name: "Static Content Generation",
+      icon: Image,
+      description: "AI-generated static ad graphics with copy variants across all 8 brands",
+    },
+    {
+      name: "LinkedIn Repurposing System",
+      icon: Linkedin,
+      description: "Auto-variant generation for B2B LinkedIn content from existing assets",
+    },
+    {
+      name: "Review Scraping System",
+      icon: Star,
+      description: "Mine 2,000+ Google reviews into finished graphics and captions by brand",
     },
   ];
 

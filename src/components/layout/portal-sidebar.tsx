@@ -25,9 +25,9 @@ import { ThemeToggle } from "@/components/theme-toggle";
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Brand Intelligence", href: "/brand-intelligence", icon: Brain },
-  { name: "Content Ideation", href: "/content-ideation", icon: Lightbulb },
-  { name: "Video Brief", href: "/video-brief", icon: Video },
-  { name: "Ad Copy", href: "/ad-copy", icon: Megaphone },
+  { name: "Content Ideation System", href: "/content-ideation", icon: Lightbulb },
+  { name: "Video Brief + Script System", href: "/video-brief", icon: Video },
+  { name: "Ad Copy Generation", href: "/ad-copy", icon: Megaphone },
 ];
 
 type PortalSidebarProps = {

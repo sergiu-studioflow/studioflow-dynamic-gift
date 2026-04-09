@@ -32,10 +32,10 @@ const navigation = [
   { name: "Content Ideation System", href: "/content-ideation", icon: Lightbulb },
   { name: "Video Brief + Script System", href: "/video-brief", icon: Video },
   { name: "Ad Copy Generation", href: "/ad-copy", icon: Megaphone },
+  { name: "Static Ad System", href: "/static-ads", icon: ImageIcon },
 ];
 
 const comingSoon = [
-  { name: "Static Content Generation", icon: ImageIcon },
   { name: "LinkedIn Repurposing System", icon: Linkedin },
   { name: "Review Scraping System", icon: Star },
 ];

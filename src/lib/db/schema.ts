@@ -244,6 +244,118 @@ export const generatedAdCopy = pgTable("generated_ad_copy", {
 });
 
 // =============================================
+// PRODUCTS (product catalogue for AI generation systems)
+// =============================================
+
+export const products = pgTable("products", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  targetAudience: text("target_audience"),
+  solution: text("solution"),
+  painPoint: text("pain_point"),
+  brandDna: text("brand_dna"),
+  imageUrl: text("image_url"),
+  videoImageUrl: text("video_image_url"),
+  visualDescription: text("visual_description"),
+  airtableRecordId: text("airtable_record_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// =============================================
+// AD STYLES (template-based ad generation)
+// =============================================
+
+export const adStyles = pgTable("ad_styles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  description: text("description"),
+  masterPrompt: text("master_prompt").notNull(),
+  referenceImageUrl: text("reference_image_url"),
+  thumbnailUrl: text("thumbnail_url"),
+  aspectRatio: text("aspect_ratio").notNull().default("1:1"),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const adStylePrompts = pgTable("ad_style_prompts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  adStyleId: uuid("ad_style_id").notNull().references(() => adStyles.id, { onDelete: "cascade" }),
+  productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+  prompt: text("prompt").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// =============================================
+// STATIC AD GENERATIONS
+// =============================================
+
+export const staticAdGenerations = pgTable("static_ad_generations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").references(() => users.id),
+  adStyleId: uuid("ad_style_id").references(() => adStyles.id),
+  productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+  styleName: text("style_name"),
+  productName: text("product_name"),
+  finalPrompt: text("final_prompt"),
+  kieJobId: text("kie_job_id"),
+  aspectRatio: text("aspect_ratio").notNull().default("1:1"),
+  resolution: text("resolution").default("1K"),
+  outputFormat: text("output_format").default("PNG"),
+  imageUrl: text("image_url"),
+  thumbnailUrl: text("thumbnail_url"),
+  status: text("status").notNull().default("pending"),
+  errorMessage: text("error_message"),
+  mode: text("mode").notNull().default("default"),
+  referenceImageUrl: text("reference_image_url"),
+  adCopy: text("ad_copy"),
+  analysisJson: text("analysis_json"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// =============================================
+// REFERENCE AD LIBRARY (shared across portals)
+// =============================================
+
+export const referenceAdLibrary = pgTable("reference_ad_library", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  imageUrl: text("image_url").notNull(),
+  industry: text("industry").notNull().default("beauty"),
+  adType: text("ad_type"),
+  brand: text("brand"),
+  tags: text("tags"),
+  airtableRecordId: text("airtable_record_id").unique(),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// =============================================
+// WINNERS LIBRARY
+// =============================================
+
+export const winnersLibrary = pgTable("winners_library", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").references(() => users.id),
+  name: text("name").notNull(),
+  imageUrl: text("image_url").notNull(),
+  sourceGenerationId: uuid("source_generation_id"),
+  productName: text("product_name"),
+  tags: text("tags"),
+  notes: text("notes"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// =============================================
 // ACTIVITY LOG (generic — all portals)
 // =============================================
 

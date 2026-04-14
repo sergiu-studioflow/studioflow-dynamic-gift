@@ -1,6 +1,20 @@
 import { pgTable, text, boolean, timestamp, uuid, jsonb, integer } from "drizzle-orm/pg-core";
 
 // =============================================
+// API KEYS (client-configurable, encrypted at rest)
+// =============================================
+
+export const apiKeys = pgTable("api_keys", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  keyName: text("key_name").notNull().unique(),
+  encryptedValue: text("encrypted_value").notNull(),
+  label: text("label").notNull(),
+  description: text("description"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+});
+
+// =============================================
 // BETTER AUTH TABLES (managed by better-auth — do not modify manually)
 // =============================================
 

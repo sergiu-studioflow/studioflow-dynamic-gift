@@ -2,8 +2,9 @@ import { auth } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
-import { Settings, User, Shield } from "lucide-react";
+import { Settings, User, Shield , Key } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
+import { ApiKeysManager } from "@/components/settings/api-keys-manager";
 
 export const dynamic = "force-dynamic";
 
@@ -95,6 +96,18 @@ export default async function SettingsPage() {
         </div>
       </div>
 
+      
+      {/* API Keys */}
+      <div className="rounded-xl border border-border bg-card shadow-card">
+        <div className="flex items-center gap-3 border-b border-border px-5 py-4">
+          <Key className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold text-foreground">API Keys</h2>
+          <span className="text-xs text-muted-foreground ml-auto">AI service credentials</span>
+        </div>
+        <div className="p-5">
+          <ApiKeysManager />
+        </div>
+      </div>
       {/* Security */}
       <div className="rounded-xl border border-border bg-card shadow-card">
         <div className="flex items-center gap-3 border-b border-border px-5 py-4">

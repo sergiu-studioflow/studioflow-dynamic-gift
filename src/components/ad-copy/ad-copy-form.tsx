@@ -51,7 +51,7 @@ type AdCopyFormProps = {
 };
 
 export function AdCopyForm({ onSuccess }: AdCopyFormProps) {
-  const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
+  const [brands, setBrands] = useState<{ id: string; brandName: string }[]>([]);
   const [brandsLoading, setBrandsLoading] = useState(true);
   const [brand, setBrand] = useState("");
   const [campaignObjective, setCampaignObjective] = useState("");
@@ -164,8 +164,8 @@ export function AdCopyForm({ onSuccess }: AdCopyFormProps) {
             </SelectTrigger>
             <SelectContent>
               {brands.map((b) => (
-                <SelectItem key={b.id} value={b.name}>
-                  {b.name}
+                <SelectItem key={b.id} value={b.brandName}>
+                  {b.brandName}
                 </SelectItem>
               ))}
               {brands.length === 0 && !brandsLoading && (

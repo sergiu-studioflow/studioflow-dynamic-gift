@@ -179,3 +179,38 @@ export type BrandIntelligence = {
   updatedAt: Date;
   createdAt: Date;
 };
+
+// =============================================
+// MULTI-CLIENT MODULE TYPES
+// =============================================
+
+export type Client = {
+  id: string;
+  brandName: string;
+  clientName: string;
+  clientSlug: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  website: string | null;
+  category: string | null;
+  primaryMarket: string | null;
+  currency: string | null;
+  cluster: string | null;
+  logoUrl: string | null;
+  brandColor: string | null;
+  monthlyAdSpend: number | null;
+  status: string;
+  storagePrefix: string;
+  settings: Record<string, unknown>;
+  notes: string | null;
+  provisionedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type ClientBrandIntel = { id: string; clientId: string; title: string; content: string | null; sectionType: string | null; sortOrder: number; createdAt: Date; updatedAt: Date };
+export type ClientProduct = { id: string; clientId: string; productName: string; category: string | null; keyBenefits: string | null; targetUseCase: string | null; isHeroProduct: boolean; price: string | null; productUrl: string | null; imageUrl: string | null; videoImageUrl: string | null; status: string; createdAt: Date; updatedAt: Date };
+export type ClientUsp = { id: string; clientId: string; uspText: string; uspCategory: string | null; isPrimary: boolean; notes: string | null; createdAt: Date; updatedAt: Date };
+export type ClientCompetitor = { id: string; clientId: string; competitorName: string; metaPageId: string | null; metaSearchTerms: string | null; tiktokHandle: string | null; instagramHandle: string | null; websiteUrl: string | null; competitorType: string | null; isActive: boolean; createdAt: Date; updatedAt: Date };
+export type ClientCreativeDna = { id: string; clientId: string; attributeName: string; attributeType: string; allowedValues: string | null; defaultValue: string | null; isRequired: boolean; createdAt: Date; updatedAt: Date };
+export type ClientResearchSource = { id: string; clientId: string; sourceType: string; identifier: string; isActive: boolean; lastScrapedAt: Date | null; createdAt: Date; updatedAt: Date };

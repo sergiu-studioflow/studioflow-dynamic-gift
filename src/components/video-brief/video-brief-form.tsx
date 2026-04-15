@@ -58,7 +58,7 @@ type VideoBriefFormProps = {
 };
 
 export function VideoBriefForm({ onSuccess }: VideoBriefFormProps) {
-  const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
+  const [brands, setBrands] = useState<{ id: string; brandName: string }[]>([]);
   const [brandsLoading, setBrandsLoading] = useState(true);
   const [brand, setBrand] = useState("");
   const [contentType, setContentType] = useState("");
@@ -157,8 +157,8 @@ export function VideoBriefForm({ onSuccess }: VideoBriefFormProps) {
             </SelectTrigger>
             <SelectContent>
               {brands.map((b) => (
-                <SelectItem key={b.id} value={b.name}>
-                  {b.name}
+                <SelectItem key={b.id} value={b.brandName}>
+                  {b.brandName}
                 </SelectItem>
               ))}
               {brands.length === 0 && !brandsLoading && (

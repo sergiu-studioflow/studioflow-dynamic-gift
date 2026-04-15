@@ -18,7 +18,8 @@ import {
 
 interface Brand {
   id: string;
-  name: string;
+  brandName: string;
+  clientSlug: string | null;
   isActive: boolean;
   sortOrder: number;
 }
@@ -83,7 +84,7 @@ export function BrandsManager() {
 
   function startEdit(brand: Brand) {
     setEditingId(brand.id);
-    setEditName(brand.name);
+    setEditName(brand.brandName);
     setError(null);
   }
 
@@ -217,7 +218,7 @@ export function BrandsManager() {
                     ) : (
                       <>
                         <span className="text-sm flex-1 text-foreground">
-                          {brand.name}
+                          {brand.brandName}
                         </span>
                         <Button
                           variant="ghost"

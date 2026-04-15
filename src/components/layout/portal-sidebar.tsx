@@ -20,6 +20,8 @@ import { cn } from "@/lib/utils";
 import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ClientSwitcher } from "@/components/layout/client-switcher";
+import { Users } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TEMPLATE NOTE: Add new navigation items here when migrating systems.
@@ -47,7 +49,7 @@ type PortalSidebarProps = {
   userEmail?: string;
 };
 
-export function PortalSidebar({ brandName, userEmail }: PortalSidebarProps) {
+export function PortalSidebar({ brandName, features, userEmail }: PortalSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -85,6 +87,9 @@ export function PortalSidebar({ brandName, userEmail }: PortalSidebarProps) {
       </div>
 
       <div className="mx-5 h-px bg-white/10" />
+
+      {/* Client Switcher (standardized multi-client module) */}
+      {features?.multi_client && <ClientSwitcher />}
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
@@ -141,6 +146,18 @@ export function PortalSidebar({ brandName, userEmail }: PortalSidebarProps) {
           </p>
         )}
         <div className="flex items-center gap-1">
+          {features?.multi_client && (
+            <Link
+              href="/clients"
+              className={cn(
+                "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors hover:bg-white/10 hover:text-sidebar-foreground",
+                pathname.startsWith("/clients") ? "text-sidebar-foreground" : "text-sidebar-muted"
+              )}
+            >
+              <Users className="h-3.5 w-3.5" />
+              Clients
+            </Link>
+          )}
           <Link
             href="/settings"
             className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-sidebar-muted transition-colors hover:bg-white/10 hover:text-sidebar-foreground"

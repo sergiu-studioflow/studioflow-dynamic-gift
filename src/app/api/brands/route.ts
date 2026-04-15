@@ -15,7 +15,7 @@ export async function GET() {
     .select()
     .from(schema.brands)
     .where(eq(schema.brands.isActive, true))
-    .orderBy(asc(schema.brands.sortOrder), asc(schema.brands.name));
+    .orderBy(asc(schema.brands.sortOrder), asc(schema.brands.brandName));
 
   return NextResponse.json(rows);
 }
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
   try {
     const [brand] = await db
       .insert(schema.brands)
-      .values({ name: parsed.data.name.trim(), sortOrder: nextOrder })
+      .values({ brandName: parsed.data.name.trim(), sortOrder: nextOrder })
       .returning();
 
     await db.insert(schema.activityLog).values({
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
       action: "brand_created",
       resourceType: "brand",
       resourceId: brand.id,
-      details: { name: brand.name },
+      details: { name: brand.brandName },
     });
 
     return NextResponse.json(brand, { status: 201 });

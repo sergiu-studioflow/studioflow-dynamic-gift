@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
 
   // Validate brand exists in DB
   const activeBrands = await db
-    .select({ name: schema.brands.name })
+    .select({ name: schema.brands.brandName })
     .from(schema.brands)
     .where(eq(schema.brands.isActive, true));
   const validBrandNames = activeBrands.map((b) => b.name);

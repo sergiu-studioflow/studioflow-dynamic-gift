@@ -32,7 +32,7 @@ export async function PUT(
   }
 
   const updates: Record<string, unknown> = { updatedAt: new Date() };
-  if (parsed.data.name !== undefined) updates.name = parsed.data.name.trim();
+  if (parsed.data.name !== undefined) updates.brandName = parsed.data.name.trim();
   if (parsed.data.isActive !== undefined) updates.isActive = parsed.data.isActive;
   if (parsed.data.sortOrder !== undefined) updates.sortOrder = parsed.data.sortOrder;
 
@@ -52,7 +52,7 @@ export async function PUT(
       action: "brand_updated",
       resourceType: "brand",
       resourceId: updated.id,
-      details: { name: updated.name, changes: parsed.data },
+      details: { name: updated.brandName, changes: parsed.data },
     });
 
     return NextResponse.json(updated);
@@ -92,7 +92,7 @@ export async function DELETE(
     action: "brand_deleted",
     resourceType: "brand",
     resourceId: deleted.id,
-    details: { name: deleted.name },
+    details: { name: deleted.brandName },
   });
 
   return NextResponse.json({ success: true });

@@ -79,8 +79,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     try {
       const res = await fetch("/api/clients");
       if (res.ok) {
-        const data: Client[] = await res.json();
-        setClients(data.filter((c) => c.status === "Active"));
+        const data = await res.json();
+        // Normalize: some portals use brandName (brands table alias), others use clientName
+        const normalized: Client[] = (Array.isArray(data) ? data : []).map((c: any) => ({
+          ...c,
+          clientName: c.clientName || c.brandName || c.name || "",
+          clientSlug: c.clientSlug || c.slug || "",
+        }));
+        setClients(normalized.filter((c) => c.status === "Active"));
       }
     } finally {
       setIsLoading(false);
@@ -133,7 +139,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         const client = clients.find((c) => c.id === id);
         if (client) {
           const params = new URLSearchParams(searchParams.toString());
-          params.set("client", client.clientSlug || client.id);
+          params.set("client", client.clientSlug);
           router.replace(`${pathname}?${params.toString()}`, { scroll: false });
         }
       } else {

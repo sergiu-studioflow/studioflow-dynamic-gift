@@ -139,7 +139,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         const client = clients.find((c) => c.id === id);
         if (client) {
           const params = new URLSearchParams(searchParams.toString());
-          params.set("client", client.clientSlug);
+          params.set("client", client.clientSlug || client.id);
           router.replace(`${pathname}?${params.toString()}`, { scroll: false });
         }
       } else {

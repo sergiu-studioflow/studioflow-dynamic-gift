@@ -52,7 +52,7 @@ export function ReferenceUpload({
       try {
         const formData = new FormData();
         formData.append("file", file);
-        formData.append("brandSlug", "dynamic-gift");
+        // brandSlug resolved server-side via BRAND_SLUG env var
         formData.append("assetType", "static-ad-system/reference-ads");
 
         const res = await fetch("/api/upload", { method: "POST", body: formData });

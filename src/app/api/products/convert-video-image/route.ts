@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
         .toBuffer();
 
       const filename = `${randomUUID()}.png`;
-      const key = r2Key("dynamic-gift", "video-generation/products", filename);
+      const key = r2Key(process.env.BRAND_SLUG || "demo", "video-generation/products", filename);
       const videoImageUrl = await uploadToR2(key, resized, "image/png");
 
       await db

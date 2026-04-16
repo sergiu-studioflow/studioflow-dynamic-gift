@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
       }
 
       const ext = filename.split(".").pop() || "bin";
-      const key = `brands/${brandSlug || "dynamic-gift"}/${assetType || "uploads"}/${uuid()}.${ext}`;
+      const key = `brands/${brandSlug || process.env.BRAND_SLUG || "default"}/${assetType || "uploads"}/${uuid()}.${ext}`;
       const presignedUrl = await getPresignedUploadUrl(key, fileType);
       const publicUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
 
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     // Mode 2: Direct file upload (FormData)
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
-    const brandSlug = (formData.get("brandSlug") as string) || "dynamic-gift";
+    const brandSlug = (formData.get("brandSlug") as string) || process.env.BRAND_SLUG || "default";
     const assetType = (formData.get("assetType") as string) || "uploads";
 
     if (!file) {

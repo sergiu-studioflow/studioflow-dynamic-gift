@@ -23,6 +23,7 @@ import { ReferenceUpload } from "./reference-upload";
 import { StepProgress, type Step } from "./step-progress";
 import { InspoGalleryDialog } from "./inspo-gallery-dialog";
 import { WinnersGalleryDialog } from "./winners-gallery-dialog";
+import { useClient } from "@/lib/client-context";
 
 type Product = {
   id: string;
@@ -68,6 +69,7 @@ function buildSteps(currentStep: number): Step[] {
 }
 
 export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: UnifiedGeneratorProps) {
+  const { clientId } = useClient();
   const [selectedProductId, setSelectedProductId] = useState("");
   const [referenceMode, setReferenceMode] = useState<ReferenceMode>("auto");
   const [uploadedRefUrl, setUploadedRefUrl] = useState<string | null>(null);
@@ -200,6 +202,7 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
           referenceImageUrl: activeReferenceUrl,
           adCopy: adCopy.trim() || undefined,
           aspectRatio,
+          clientId,
         }),
       });
 

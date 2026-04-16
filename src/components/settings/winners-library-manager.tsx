@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Loader2, Plus, Trash2, Trophy, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useClient } from "@/lib/client-context";
 
 type Winner = {
   id: string;
@@ -20,18 +21,19 @@ export function WinnersLibraryManager() {
   const [uploading, setUploading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { clientId } = useClient();
 
   const fetchWinners = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/winners");
+      const res = await fetch(`/api/winners${clientId ? `?clientId=${clientId}` : ""}`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) setWinners(data);
       }
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, []);
+  }, [clientId]);
 
   useEffect(() => { fetchWinners(); }, [fetchWinners]);
 

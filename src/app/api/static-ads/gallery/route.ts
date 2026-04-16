@@ -13,10 +13,14 @@ export async function GET(req: NextRequest) {
     if (isAuthError(authResult)) return authResult;
 
     const status = req.nextUrl.searchParams.get("status");
+    const clientId = req.nextUrl.searchParams.get("clientId");
     const limit = Math.min(parseInt(req.nextUrl.searchParams.get("limit") || "100"), 200);
     const offset = parseInt(req.nextUrl.searchParams.get("offset") || "0");
 
     const conditions = [];
+    if (clientId) {
+      conditions.push(eq(schema.staticAdGenerations.clientId, clientId));
+    }
     if (status && status !== "all") {
       conditions.push(eq(schema.staticAdGenerations.status, status));
     }

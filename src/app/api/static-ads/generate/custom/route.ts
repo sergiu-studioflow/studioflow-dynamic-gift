@@ -3,44 +3,44 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { analyzeReferenceAd, generateCustomPrompt, BRAND_LOGO_URL } from "@/lib/static-ads/custom-pipeline";
+import { analyzeReferenceAd, generateCustomPrompt, getClientAdConfig } from "@/lib/static-ads/custom-pipeline";
 import { submitKieJob } from "@/lib/static-ads/kie-ai";
 import { toAccessibleUrl } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // 5 min — two Claude calls + image processing + Kie submit
+export const maxDuration = 300;
 
 /**
  * POST /api/static-ads/generate/custom
  *
- * Runs the full 3-step pipeline synchronously:
- * 1. Claude Vision analyzes reference ad
- * 2. Claude generates image prompt
- * 3. Kie AI job submitted
+ * Multi-client version: loads per-client Agent 1 + Agent 2 prompts from DB.
+ * Products fetched from client_products table.
  *
- * Returns: { generationId, kieJobId, completedSteps }
- * Body: { productId, referenceImageUrl, adCopy?, aspectRatio? }
+ * Body: { productId, referenceImageUrl, adCopy?, aspectRatio?, clientId }
  */
 export async function POST(req: NextRequest) {
   const authResult = await requireAuth();
   if (isAuthError(authResult)) return authResult;
   const { portalUser } = authResult;
 
-  let body: { productId: string; referenceImageUrl: string; adCopy?: string; aspectRatio?: string };
+  let body: { productId: string; referenceImageUrl: string; adCopy?: string; aspectRatio?: string; clientId?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { productId, referenceImageUrl, adCopy, aspectRatio } = body;
+  const { productId, referenceImageUrl, adCopy, aspectRatio, clientId } = body;
 
   if (!productId || !referenceImageUrl) {
     return NextResponse.json({ error: "productId and referenceImageUrl are required" }, { status: 400 });
   }
 
-  // Input validation
-  const VALID_RATIOS = ["auto", "1:1", "2:3", "3:2", "4:5", "5:4", "9:16", "16:9"];
+  if (!clientId) {
+    return NextResponse.json({ error: "clientId is required — select a client first" }, { status: 400 });
+  }
+
+  const VALID_RATIOS = ["auto", "1:1", "1:4", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
   if (aspectRatio && !VALID_RATIOS.includes(aspectRatio)) {
     return NextResponse.json({ error: `Invalid aspect ratio: ${aspectRatio}` }, { status: 400 });
   }
@@ -48,10 +48,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Ad copy must be under 5000 characters" }, { status: 400 });
   }
 
+  // Fetch product from client_products (per-client)
   const [product] = await db
     .select()
-    .from(schema.products)
-    .where(eq(schema.products.id, productId))
+    .from(schema.clientProducts)
+    .where(eq(schema.clientProducts.id, productId))
     .limit(1);
 
   if (!product) {
@@ -62,10 +63,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Product has no image — required for ad generation" }, { status: 400 });
   }
 
-  // ── Step 1: Analyze reference ad ──
+  // ── Step 1: Analyze reference ad (uses client-specific Agent 1 prompt) ──
   let analysisJson: string;
   try {
-    analysisJson = await analyzeReferenceAd(referenceImageUrl);
+    analysisJson = await analyzeReferenceAd(referenceImageUrl, clientId);
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Analysis failed", failedStep: 1 },
@@ -73,21 +74,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ── Step 2: Generate prompt ──
+  // ── Step 2: Generate prompt (uses client-specific Agent 2 prompt) ──
   let generatedPrompt: string;
   try {
     const result = await generateCustomPrompt({
       analysisJson,
       adCopy: adCopy?.trim() || undefined,
       product: {
-        name: product.name,
+        name: product.productName,
         imageUrl: product.imageUrl!,
-        visualDescription: product.visualDescription,
-        solution: product.solution,
-        targetAudience: product.targetAudience,
+        visualDescription: product.keyBenefits,
       },
       referenceImageUrl,
       aspectRatio: aspectRatio || "auto",
+      clientId,
     });
     generatedPrompt = result.prompt;
   } catch (err) {
@@ -103,8 +103,9 @@ export async function POST(req: NextRequest) {
     .insert(schema.staticAdGenerations)
     .values({
       userId: portalUser.id,
+      clientId,
       productId: product.id,
-      productName: product.name,
+      productName: product.productName,
       styleName: "Custom",
       finalPrompt: generatedPrompt,
       aspectRatio: resolvedAspectRatio,
@@ -120,15 +121,24 @@ export async function POST(req: NextRequest) {
 
   try {
     // Generate presigned URLs so Kie AI can download from private R2 bucket
-    const [accessibleRefUrl, accessibleProductUrl, accessibleLogoUrl] = await Promise.all([
+    const [accessibleRefUrl, accessibleProductUrl] = await Promise.all([
       toAccessibleUrl(referenceImageUrl),
       toAccessibleUrl(product.imageUrl!),
-      toAccessibleUrl(BRAND_LOGO_URL),
     ]);
+
+    // Build image URLs array — include brand logo if configured
+    const imageUrls = [accessibleRefUrl, accessibleProductUrl];
+    try {
+      const config = await getClientAdConfig(clientId);
+      if (config.brandLogoUrl) {
+        const accessibleLogoUrl = await toAccessibleUrl(config.brandLogoUrl);
+        imageUrls.push(accessibleLogoUrl);
+      }
+    } catch { /* config already loaded above, ignore */ }
 
     const kieResult = await submitKieJob({
       prompt: generatedPrompt,
-      imageUrls: [accessibleRefUrl, accessibleProductUrl, accessibleLogoUrl],
+      imageUrls,
       aspectRatio: resolvedAspectRatio,
     });
 

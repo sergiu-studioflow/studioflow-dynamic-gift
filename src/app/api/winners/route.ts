@@ -13,14 +13,20 @@ export const dynamic = "force-dynamic";
  * GET /api/winners
  * List active winners with presigned preview URLs.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   const authResult = await requireAuth();
   if (isAuthError(authResult)) return authResult;
+
+  const clientId = req.nextUrl.searchParams.get("clientId");
+  const conditions = [eq(schema.winnersLibrary.isActive, true)];
+  if (clientId) {
+    conditions.push(eq(schema.winnersLibrary.clientId, clientId));
+  }
 
   const winners = await db
     .select()
     .from(schema.winnersLibrary)
-    .where(eq(schema.winnersLibrary.isActive, true))
+    .where(and(...conditions))
     .orderBy(schema.winnersLibrary.createdAt);
 
   const withPreviews = await Promise.all(
@@ -48,6 +54,7 @@ export async function POST(req: NextRequest) {
   const tags = (formData.get("tags") as string) || null;
   const notes = (formData.get("notes") as string) || null;
   const productName = (formData.get("productName") as string) || null;
+  const clientId = (formData.get("clientId") as string) || null;
 
   if (!file) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -65,7 +72,7 @@ export async function POST(req: NextRequest) {
 
   const [winner] = await db
     .insert(schema.winnersLibrary)
-    .values({ userId: portalUser.id, name, imageUrl, tags, notes, productName })
+    .values({ userId: portalUser.id, clientId, name, imageUrl, tags, notes, productName })
     .returning();
 
   return NextResponse.json(winner, { status: 201 });

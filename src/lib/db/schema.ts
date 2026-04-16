@@ -328,8 +328,9 @@ export const adStylePrompts = pgTable("ad_style_prompts", {
 export const staticAdGenerations = pgTable("static_ad_generations", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").references(() => users.id),
+  clientId: uuid("client_id").references(() => brands.id, { onDelete: "set null" }),
   adStyleId: uuid("ad_style_id").references(() => adStyles.id),
-  productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+  productId: uuid("product_id").references(() => clientProducts.id, { onDelete: "set null" }),
   styleName: text("style_name"),
   productName: text("product_name"),
   finalPrompt: text("final_prompt"),
@@ -375,12 +376,29 @@ export const referenceAdLibrary = pgTable("reference_ad_library", {
 export const winnersLibrary = pgTable("winners_library", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").references(() => users.id),
+  clientId: uuid("client_id").references(() => brands.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   imageUrl: text("image_url").notNull(),
   sourceGenerationId: uuid("source_generation_id"),
   productName: text("product_name"),
   tags: text("tags"),
   notes: text("notes"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// =============================================
+// CLIENT STATIC AD CONFIG (per-client Agent prompts)
+// =============================================
+
+export const clientStaticAdConfig = pgTable("client_static_ad_config", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  clientId: uuid("client_id").notNull().unique().references(() => brands.id, { onDelete: "cascade" }),
+  agent1Prompt: text("agent1_prompt").notNull(),
+  agent2Prompt: text("agent2_prompt").notNull(),
+  brandLogoUrl: text("brand_logo_url"),
+  allowedIndustries: text("allowed_industries").default("[]"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
     .insert(schema.winnersLibrary)
     .values({
       userId: portalUser.id,
+      clientId: generation.clientId || null,
       name: winnerName,
       imageUrl,
       sourceGenerationId: generation.id,

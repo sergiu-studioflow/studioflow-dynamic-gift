@@ -5,6 +5,7 @@ import { ImageIcon, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AdCard, type StaticAdGeneration } from "./ad-card";
 import { AdDetailDialog } from "./ad-detail-dialog";
+import { useClient } from "@/lib/client-context";
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -23,10 +24,15 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
   const [loading, setLoading] = useState(true);
   const [selectedGeneration, setSelectedGeneration] = useState<StaticAdGeneration | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const { clientId } = useClient();
 
   const fetchGallery = useCallback(async () => {
     try {
-      const url = filter === "all" ? "/api/static-ads/gallery" : `/api/static-ads/gallery?status=${filter}`;
+      const params = new URLSearchParams();
+      if (filter !== "all") params.set("status", filter);
+      if (clientId) params.set("clientId", clientId);
+      const qs = params.toString();
+      const url = `/api/static-ads/gallery${qs ? `?${qs}` : ""}`;
       const res = await fetch(url);
       const data = await res.json();
       if (Array.isArray(data)) setGenerations(data);
@@ -35,7 +41,7 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, clientId]);
 
   useEffect(() => {
     fetchGallery();

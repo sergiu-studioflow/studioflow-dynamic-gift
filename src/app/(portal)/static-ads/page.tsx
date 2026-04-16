@@ -13,6 +13,7 @@ import { AdGallery } from "@/components/static-ads/ad-gallery";
 import { UnifiedGenerator } from "@/components/static-ads/unified-generator";
 import { EditMode } from "@/components/static-ads/edit-mode";
 import { WinnersLibraryManager } from "@/components/settings/winners-library-manager";
+import { useClient } from "@/lib/client-context";
 
 type Product = {
   id: string;
@@ -32,14 +33,20 @@ export default function StaticAdsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [galleryRefresh, setGalleryRefresh] = useState(0);
   const [editTargetId, setEditTargetId] = useState<string | null>(null);
+  const { clientSlug, clientId, isReady } = useClient();
 
-  // Load products
+  // Load products for selected client
   useEffect(() => {
-    fetch("/api/products?full=true")
+    if (!isReady || !clientSlug) return;
+    fetch(`/api/clients/${clientSlug}/products`)
       .then((r) => r.json())
-      .then((data) => { if (Array.isArray(data)) setProducts(data); })
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setProducts(data.map((p: any) => ({ id: p.id, name: p.productName, imageUrl: p.imageUrl })));
+        }
+      })
       .catch(console.error);
-  }, []);
+  }, [clientSlug, isReady]);
 
   return (
     <div className="flex flex-col h-full -m-10 -mt-12">

@@ -13,6 +13,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useClient } from "@/lib/client-context";
 import { ReferenceUpload } from "./reference-upload";
 import { StepProgress, type Step } from "./step-progress";
 
@@ -51,6 +52,7 @@ function buildSteps(currentStep: number): Step[] {
 }
 
 export function CustomGenerator({ products, onGalleryRefresh }: CustomGeneratorProps) {
+  const { clientId } = useClient();
   const [selectedProductId, setSelectedProductId] = useState("");
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
   const [adCopy, setAdCopy] = useState("");
@@ -119,6 +121,7 @@ export function CustomGenerator({ products, onGalleryRefresh }: CustomGeneratorP
           productId: selectedProductId,
           referenceImageUrl,
           adCopy: adCopy.trim() || undefined,
+          clientId,
         }),
       });
 

@@ -91,9 +91,4 @@ export const CONFIGURABLE_KEYS = [
     label: "Anthropic Claude",
     description: "Powers Video Generation pipeline (Steps 1, 4, 5) and Static Ad creative analysis",
   },
-  {
-    keyName: "GEMINI_API_KEY",
-    label: "Google Gemini",
-    description: "Powers Meta Ads performance analysis and pattern detection",
-  },
 ];

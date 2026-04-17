@@ -10,9 +10,6 @@ import {
   Video,
   Megaphone,
   ImageIcon,
-  Linkedin,
-  Star,
-  Lock,
   Settings,
   LogOut,
 } from "lucide-react";
@@ -35,11 +32,6 @@ const baseNavigation = [
   { name: "Content Ideation System", href: "/content-ideation", icon: Lightbulb },
   { name: "Video Brief + Script System", href: "/video-brief", icon: Video },
   { name: "Ad Copy Generation", href: "/ad-copy", icon: Megaphone },
-];
-
-const comingSoon = [
-  { name: "LinkedIn Repurposing System", icon: Linkedin },
-  { name: "Review Scraping System", icon: Star },
 ];
 
 type PortalSidebarProps = {
@@ -125,24 +117,6 @@ export function PortalSidebar({ brandName, features, userEmail }: PortalSidebarP
           );
         })}
 
-        {/* Coming Soon */}
-        <div className="mt-4 pt-3 border-t border-white/10">
-          <span className="px-3 text-[10px] font-semibold uppercase tracking-widest text-white/25">
-            Coming Soon
-          </span>
-          <div className="mt-2 space-y-1">
-            {comingSoon.map((item) => (
-              <div
-                key={item.name}
-                className="flex items-center gap-3 rounded-lg text-sm font-medium py-2.5 border-l-[3px] border-l-transparent pl-[calc(0.75rem-3px)] pr-3 text-white/25 cursor-default"
-              >
-                <item.icon className="h-5 w-5 flex-shrink-0" />
-                <span className="flex-1">{item.name}</span>
-                <Lock className="h-3 w-3 flex-shrink-0" />
-              </div>
-            ))}
-          </div>
-        </div>
       </nav>
 
       {/* Footer */}

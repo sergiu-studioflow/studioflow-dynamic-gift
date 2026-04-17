@@ -35,6 +35,7 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [converting, setConverting] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -157,6 +158,24 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
     }
   };
 
+  const eligibleForConvert = products.filter((p) => p.imageUrl && !p.videoImageUrl).length;
+
+  const handleConvertAll = async () => {
+    const eligible = products.filter((p) => p.imageUrl && !p.videoImageUrl);
+    if (eligible.length === 0) return;
+    setConverting(true);
+    try {
+      const res = await fetch(`/api/clients/${clientSlug}/products/convert-video-image`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productIds: eligible.map((p) => p.id) }),
+      });
+      if (res.ok) load();
+    } finally {
+      setConverting(false);
+    }
+  };
+
   return (
     <Card>
       <CardHeader
@@ -182,6 +201,12 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
                 <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete {selected.size}
               </Button>
             )}
+            {eligibleForConvert > 0 && (
+              <Button size="sm" variant="outline" onClick={handleConvertAll} disabled={converting}>
+                {converting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Video className="mr-1.5 h-3.5 w-3.5" />}
+                {converting ? "Converting..." : `Convert ${eligibleForConvert} to 9:16`}
+              </Button>
+            )}
             <Button size="sm" variant="outline" onClick={() => setShowAdd(!showAdd)}>
               <Plus className="mr-1.5 h-3.5 w-3.5" /> {showAdd ? "Cancel" : "Add"}
             </Button>
@@ -200,7 +225,7 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
                   type="text"
                   value={addName}
                   onChange={(e) => setAddName(e.target.value)}
-                  placeholder="e.g. Whitening Strips"
+                  placeholder="e.g. Printed Polyester Lanyards"
                   className="w-full h-9 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-foreground/30"
                   autoFocus
                 />

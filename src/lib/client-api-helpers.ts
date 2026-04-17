@@ -45,3 +45,6 @@ export async function getClientStoragePrefix(clientId: string): Promise<string |
     .limit(1);
   return client?.storagePrefix || null;
 }
+
+// Alias for backward compatibility with routes that import resolveClientId
+export const resolveClientId = resolveClientSlug;

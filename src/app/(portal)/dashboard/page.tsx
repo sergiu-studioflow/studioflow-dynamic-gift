@@ -1,4 +1,4 @@
-import { Brain, Lightbulb, Video, Megaphone, Image, Linkedin, Star, Lock } from "lucide-react";
+import { Brain, Lightbulb, Video, Megaphone, Image, Linkedin, Star, Lock, Target, FileText } from "lucide-react";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +34,18 @@ export default function DashboardPage() {
       href: "/ad-copy",
       icon: Megaphone,
       description: "Complete Meta ad copy sets with multiple variations per concept for A/B testing",
+    },
+    {
+      name: "Competitor Research",
+      href: "/competitor-ads",
+      icon: Target,
+      description: "Track and analyze competitor ads across Meta, TikTok, and Instagram",
+    },
+    {
+      name: "Creative Briefs",
+      href: "/research-briefs",
+      icon: FileText,
+      description: "AI-generated creative briefs from competitor research insights",
     },
   ];
 

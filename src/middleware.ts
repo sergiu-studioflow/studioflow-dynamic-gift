@@ -4,7 +4,8 @@ export function middleware(request: NextRequest) {
   const isPublicRoute =
     request.nextUrl.pathname.startsWith("/login") ||
     request.nextUrl.pathname.startsWith("/api/auth") ||
-    request.nextUrl.pathname.startsWith("/api/webhook");
+    request.nextUrl.pathname.startsWith("/api/webhook") ||
+    request.nextUrl.pathname.startsWith("/api/research-briefs/callback");
 
   // Check for Better Auth session cookie (edge-compatible — no DB call)
   const sessionCookie =

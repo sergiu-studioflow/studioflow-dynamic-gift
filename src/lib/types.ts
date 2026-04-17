@@ -214,3 +214,42 @@ export type ClientUsp = { id: string; clientId: string; uspText: string; uspCate
 export type ClientCompetitor = { id: string; clientId: string; competitorName: string; metaPageId: string | null; metaSearchTerms: string | null; tiktokHandle: string | null; instagramHandle: string | null; websiteUrl: string | null; competitorType: string | null; isActive: boolean; createdAt: Date; updatedAt: Date };
 export type ClientCreativeDna = { id: string; clientId: string; attributeName: string; attributeType: string; allowedValues: string | null; defaultValue: string | null; isRequired: boolean; createdAt: Date; updatedAt: Date };
 export type ClientResearchSource = { id: string; clientId: string; sourceType: string; identifier: string; isActive: boolean; lastScrapedAt: Date | null; createdAt: Date; updatedAt: Date };
+
+// =============================================
+// COMPETITOR RESEARCH SYSTEM
+// =============================================
+
+export type ResearchBrief = {
+  id: string;
+  clientId: string | null;
+  userId: string | null;
+  sourceType: string;
+  sourceId: number;
+  sourceSnapshot: Record<string, unknown> | null;
+  title: string;
+  mediaType: string;
+  creativeFormat: string | null;
+  funnelStage: string | null;
+  strategicHypothesis: string | null;
+  psychologyAngle: string | null;
+  primaryHook: string | null;
+  hookVariations: string[] | null;
+  visualDirection: string | null;
+  shotList: Array<{ timecode: string; shot: string; description: string; onScreenText?: string }> | null;
+  visualComposition: { layout: string; colorPalette: string; typography: string; hierarchy: string } | null;
+  cardDirections: Array<{ cardNumber: number; angle: string; visual: string; copy: string; cta: string }> | null;
+  onScreenText: Array<{ text: string; timing: string; placement: string; style?: string }> | null;
+  audioDirection: string | null;
+  brandVoiceLock: string | null;
+  complianceRequirements: string[] | null;
+  targetPersona: string | null;
+  lockedElements: string[] | null;
+  variableElements: string[] | null;
+  fullBrief: Record<string, unknown>;
+  status: string;
+  errorMessage: string | null;
+  aiModel: string | null;
+  generationDurationMs: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+};

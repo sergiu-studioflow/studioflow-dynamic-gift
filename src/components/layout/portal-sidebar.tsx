@@ -21,20 +21,19 @@ import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ClientSwitcher } from "@/components/layout/client-switcher";
-import { Users } from "lucide-react";
+import { Users, Clapperboard } from "lucide-react";
+import { useClient } from "@/lib/client-context";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TEMPLATE NOTE: Add new navigation items here when migrating systems.
-// Copy the nav item pattern and add the route + icon.
-// ─────────────────────────────────────────────────────────────────────────────
+// Clients that have systems enabled
+const STATIC_AD_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
+const VIDEO_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
 
-const navigation = [
+const baseNavigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Brand Intelligence", href: "/brand-intelligence", icon: Brain },
   { name: "Content Ideation System", href: "/content-ideation", icon: Lightbulb },
   { name: "Video Brief + Script System", href: "/video-brief", icon: Video },
   { name: "Ad Copy Generation", href: "/ad-copy", icon: Megaphone },
-  { name: "Static Ad System", href: "/static-ads", icon: ImageIcon },
 ];
 
 const comingSoon = [
@@ -52,6 +51,14 @@ type PortalSidebarProps = {
 export function PortalSidebar({ brandName, features, userEmail }: PortalSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { clientSlug } = useClient();
+
+  // Build navigation dynamically — show systems only for enabled clients
+  const navigation = [
+    ...baseNavigation,
+    ...(STATIC_AD_CLIENTS.includes(clientSlug) ? [{ name: "Static Ad System", href: "/static-ads", icon: ImageIcon }] : []),
+    ...(VIDEO_CLIENTS.includes(clientSlug) ? [{ name: "Video Generation", href: "/video-generation", icon: Clapperboard }] : []),
+  ];
 
   async function handleSignOut() {
     await authClient.signOut();

@@ -53,6 +53,16 @@ make a seedance 2 prompt for a UGC ad about '[PRODUCT_NAME]' with product image 
 the script says '[SCRIPT — the full scene description and dialogue]'
 
 ═══════════════════════════════════════
+MODE: UGC (no product, no character)
+═══════════════════════════════════════
+Output template:
+create a UGC talking head ad featuring [TALENT_DESCRIPTION — specific physical appearance, age, skin tone, hair, wardrobe, vibe — make them feel like a real person not a model]
+
+The scene is [SETTING — specific real-world location, time of day, atmosphere, what is blurred in the background, any incidental props that add authenticity]  Shot on [CAPTURE_DEVICE e.g. front-facing iPhone, handheld Sony ZV, etc.], [ORIENTATION e.g. vertical], [CAMERA_MOVEMENT e.g. slight handheld movement]
+
+SCRIPT: "[FULL DIALOGUE — the exact spoken words, natural conversational tone, first person, authentic as if telling a close friend]"
+
+═══════════════════════════════════════
 MODE: B-Roll
 ═══════════════════════════════════════
 Output template:
@@ -124,7 +134,8 @@ IMPORTANT:
 - CRITICAL: If CHARACTER info is provided (name + physical description), use those exact names for the speakers and use the provided physical descriptions for any appearance references. DO NOT invent new character descriptions. The character references will also be provided as images separately, but include the text descriptions in the prompt to reinforce consistency
 - For Green Screen mode, describe a talking head composited over product hero plates with visual effects, text overlays, and transitions. The talent is in a corner of the frame with product visuals filling the background
 - For UGC mode, describe the creator naturally using/presenting the product
-- For B-Roll mode, describe cinematic product shots with no humans`;
+- For B-Roll mode, describe cinematic product shots with no humans
+- For UGC (no product, no character) mode: describe a specific believable real person (not a generic model), a vivid authentic real-world setting, and a clear capture device / camera style. The talent and setting must feel grounded and real. No products visible anywhere in frame. No character image reference`;
 
 export async function craftPromptAgent({
   productName,
@@ -157,6 +168,8 @@ export async function craftPromptAgent({
     mode = "A-Roll — Green Screen";
   } else if (videoType === "broll") {
     mode = "B-Roll";
+  } else if (videoType === "ugc" && !hasProduct && !hasCharacter) {
+    mode = "UGC (no product, no character)";
   } else {
     mode = hasCharacter ? "UGC (with character ref)" : "UGC (no character)";
   }
@@ -3104,9 +3117,13 @@ export async function formatArollGreenScreenTemplate(
 // ─────────────────────────────────────────────
 
 const VOICE_CLEANUP_SYSTEM = `You are a voice clarity editor preparing dialogue for an AI video model (Seedance 2.0) that generates speech natively from text.
-Your job is to process ONLY the spoken dialogue lines in the script — the text inside quotation marks. Do not touch, remove, or rewrite any stage directions, timestamps, action notes, or formatting. Leave everything outside of quotation marks exactly as it is.
+Your job is to process ONLY the spoken dialogue lines in the script — the text inside quotation marks. Do not touch, remove, or rewrite any stage directions, timestamps, action notes, or formatting. Leave everything about the prompt and the prompt structure the same.
+
+
 Before editing, read the full script once to identify: the brand name(s), any product names, industry-specific terms, and the emotional tone of the ad. Use this context to inform every rule below.
 Clarity rules:
+
+
 
 
 Spell out any acronyms letter by letter with hyphens (e.g. "SEO" → "S-E-O", "ROI" → "R-O-I")
@@ -3116,7 +3133,11 @@ Replace any technical, industry-specific, or rarely spoken words with simpler co
 Break any sentence longer than 15 words into two at a natural split point
 
 
+
+
 Emphasis rules:
+
+
 
 
 CAPITALISE words that carry the emotional or commercial punch of the line — key benefits, transformation words, action words, contrast words
@@ -3131,11 +3152,126 @@ Apply the same hyphen treatment to any product name, feature name, or tagline th
 Output rules:
 
 
+
+
 Return the full script exactly as given, with only the dialogue lines updated inside their quotation marks
 Do not add commentary, notes, or explanations of changes
-Do not alter structure, emojis, section headers, timestamps, or stage direction
+Do not alter structure, emojis, section headers, timestamps, or stage direction of any other part of the prompt
+
 
 DO NOT EXPLAIN WHAT YOU'VE DONT just ammend, keep the structure largley the same`;
+
+// ─────────────────────────────────────────────
+// Step 4c: No-Ref UGC Template (Claude Sonnet 4.6)
+// ─────────────────────────────────────────────
+
+const NO_REF_SYSTEM = `All outputs must match this template structure. Take the Prompt and adjust it accordingly. Ensure that the characters do not exceed 2050. ⭐ AI VIDEO PROMPT — "{{PROJECT_TITLE}}" | {{VIDEO_ENGINE}} UGC Ad (No Reference / Prompt-Driven)
+Format: {{ASPECT_RATIO}}
+Length: {{VIDEO_LENGTH}} seconds
+Engine: {{VIDEO_ENGINE}}
+Objective: {{AD_OBJECTIVE}}
+Reference Mode: None — fully prompt-driven generation
+Capture Device: {{CAPTURE_DEVICE}}
+Style: {{STYLE_DESCRIPTION}}
+
+
+🎥 {{VIDEO_ENGINE}} DIRECT-RESPONSE MASTER PROMPT
+Create a fast-paced, viral {{VIDEO_LENGTH_ROUNDED}}-second UGC {{NICHE}} ad designed for immediate conversions.
+A {{TALENT_DESCRIPTION}} films themselves selfie-style in a {{SETTING}} using {{CAPTURE_DEVICE}}.
+{{CAMERA_STYLE}}. {{LIGHTING_DESCRIPTION}}.
+The ad must open with an aggressive scroll-stopping hook in the first 2 seconds.
+
+
+🎤 SCRIPT (HIGH-CONVERTING VERSION)
+0–2 sec (HOOK)
+({{HOOK_VISUAL_DIRECTION}})
+"{{HOOK_LINE}}"
+2–{{BEAT_2_END}} sec
+({{BEAT_2_VISUAL_DIRECTION}})
+"{{BEAT_2_LINE}}"
+{{BEAT_2_END}}–{{BEAT_3_END}} sec
+({{BEAT_3_VISUAL_DIRECTION}})
+"{{BEAT_3_LINE}}"
+{{BEAT_3_END}}–{{BEAT_4_END}} sec
+({{BEAT_4_VISUAL_DIRECTION}})
+"{{BEAT_4_LINE}}"
+{{BEAT_4_END}}–{{BEAT_5_END}} sec
+({{BEAT_5_VISUAL_DIRECTION}})
+"{{BEAT_5_LINE}}"
+{{BEAT_5_END}}–{{VIDEO_LENGTH_ROUNDED}} sec (CTA)
+({{CTA_VISUAL_DIRECTION}})
+"{{CTA_LINE}}"
+{{OUTRO_ACTION}}
+⏱ Read timing: {{VIDEO_LENGTH}} sec
+
+
+🎬 SHOT FLOW — PERFORMANCE EDITING
+Shot 1: {{SHOT_1_DESCRIPTION}}
+Shot 2: {{SHOT_2_DESCRIPTION}}
+Shot 3: {{SHOT_3_DESCRIPTION}}
+Shot 4: {{SHOT_4_DESCRIPTION}}
+Shot 5: {{SHOT_5_DESCRIPTION}}
+{{EDITING_STYLE}}
+
+
+👤 TALENT DIRECTION
+
+
+{{TALENT_ENERGY}}
+{{TALENT_WARDROBE}}
+{{TALENT_EXPRESSION}}
+{{TALENT_EYE_LINE}}
+{{TALENT_BODY_LANGUAGE}}
+{{TALENT_PERSONA}}
+
+
+
+
+✨ VISUAL CONVERSION RULES
+
+
+{{VISUAL_RULE_1}}
+{{VISUAL_RULE_2}}
+Fast creator-style pacing
+{{KEY_MOMENT}}
+High-energy facial expressions
+Real {{PLATFORM}} paid ad aesthetic
+{{ADDITIONAL_VISUAL_RULES}}
+
+
+
+
+🚫 ANTI-GLITCH RULES
+
+
+{{ANTI_GLITCH_RULE_1}}
+{{ANTI_GLITCH_RULE_2}}
+Hands keep 5 fingers
+Perfect lip sync
+No background warping
+No face flicker
+No identity drift between cuts
+{{ADDITIONAL_ANTI_GLITCH_RULES}}`;
+
+export async function formatNoRefTemplate(
+  cleanedPrompt: string,
+  aspectRatio: string,
+  duration: number
+): Promise<string> {
+  const result = await callClaude({
+    system: NO_REF_SYSTEM,
+    messages: [
+      {
+        role: "user",
+        content: `Format this prompt into the template. Aspect ratio: ${aspectRatio}. Duration: ${duration} seconds.\n\n${cleanedPrompt}`,
+      },
+    ],
+    model: "claude-sonnet-4-6",
+    maxTokens: 8000,
+    budgetTokens: 4000,
+  });
+  return result.text;
+}
 
 export async function cleanVoiceDialogue(prompt: string): Promise<string> {
   const result = await callClaude({

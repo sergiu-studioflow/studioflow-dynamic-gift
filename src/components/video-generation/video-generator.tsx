@@ -166,8 +166,8 @@ const STEP_LABELS_AROLL = [
   "Generating video...",
 ];
 
-function buildSteps(currentStep: number, isAroll: boolean, failedStep?: number): Step[] {
-  const labels = isAroll ? STEP_LABELS_AROLL : STEP_LABELS_DEFAULT;
+function buildSteps(currentStep: number, isAroll: boolean, failedStep?: number, isNoRefUGC?: boolean): Step[] {
+  const labels = (isAroll || isNoRefUGC) ? STEP_LABELS_AROLL : STEP_LABELS_DEFAULT;
 
   return labels.map((label, i) => {
     if (failedStep !== undefined && i === failedStep - 1) {
@@ -242,7 +242,7 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
   const showScenes = isPodcast;
   const isTalkingHead = isAroll && selectedArollStyle === "talking-head";
   const showProducts = !isPodcast && !isTalkingHead;
-  const productOptional = isAroll;
+  const productOptional = isAroll || selectedType === "ugc";
 
   const hasVideoImage = (p: Product) => !!p.videoImageUrl;
   const isProcessing = state.phase === "pipeline" || state.phase === "generating";
@@ -413,14 +413,15 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
     setState({ phase: "idle" });
   };
 
-  const totalSteps = isAroll ? STEP_LABELS_AROLL.length : STEP_LABELS_DEFAULT.length;
+  const isNoRefUGC = selectedType === "ugc" && !selectedProductId;
+  const totalSteps = (isAroll || isNoRefUGC) ? STEP_LABELS_AROLL.length : STEP_LABELS_DEFAULT.length;
   const currentSteps: Step[] =
     state.phase === "pipeline"
-      ? buildSteps(state.currentStep, isAroll)
+      ? buildSteps(state.currentStep, isAroll, undefined, isNoRefUGC)
       : state.phase === "generating"
-        ? buildSteps(totalSteps - 1, isAroll)
+        ? buildSteps(totalSteps - 1, isAroll, undefined, isNoRefUGC)
         : state.phase === "error" && state.failedStep
-          ? buildSteps(0, isAroll, state.failedStep)
+          ? buildSteps(0, isAroll, state.failedStep, isNoRefUGC)
           : [];
 
   // Phase 1: Video Type Selection

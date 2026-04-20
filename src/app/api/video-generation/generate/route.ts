@@ -16,6 +16,7 @@ import {
   formatArollPodcastWithRefsTemplate,
   formatArollPodcastNoRefsTemplate,
   formatArollGreenScreenTemplate,
+  formatNoRefTemplate,
   cleanVoiceDialogue,
 } from "@/lib/video-generation/pipeline";
 import { submitVideoJob } from "@/lib/video-generation/video-provider";
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
   const hasProduct = !!productId;
 
   // Validate inputs
-  if (!isAroll && !productId) {
+  if (!isAroll && videoType !== "ugc" && !productId) {
     return NextResponse.json({ error: "productId is required" }, { status: 400 });
   }
   if (!script?.trim()) {
@@ -129,6 +130,7 @@ export async function POST(request: NextRequest) {
     .returning();
 
   const generationId = generation.id;
+  const isNoRefUGC = videoType === "ugc" && !productId && !hasCharacter;
 
   try {
     // ── Step 1: Craft Prompt (Claude Agent) ──
@@ -215,6 +217,8 @@ export async function POST(request: NextRequest) {
         finalPrompt = await formatArollGreenScreenTemplate(cleanedResult, aspectRatio, Number(duration));
       } else if (videoType === "broll") {
         finalPrompt = await formatBrollTemplate(cleanedResult, aspectRatio, Number(duration));
+      } else if (isNoRefUGC) {
+        finalPrompt = await formatNoRefTemplate(cleanedResult, aspectRatio, Number(duration));
       } else if (hasCharacter) {
         finalPrompt = await formatDualRefTemplate(cleanedResult, aspectRatio, Number(duration));
       } else {
@@ -235,7 +239,7 @@ export async function POST(request: NextRequest) {
 
     // ── Step 5: Voice Cleanup (Claude, A-Roll only) ──
     let promptForSeedance = finalPrompt;
-    if (isAroll) {
+    if (isAroll || isNoRefUGC) {
       try {
         promptForSeedance = await cleanVoiceDialogue(finalPrompt);
       } catch (err) {
@@ -253,7 +257,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Step 5/6: Submit to Seedance 2.0 ──
-    const seedanceStep = isAroll ? 6 : 5;
+    const seedanceStep = (isAroll || isNoRefUGC) ? 6 : 5;
     const imageUrls: string[] = [];
 
     if (product?.videoImageUrl) {

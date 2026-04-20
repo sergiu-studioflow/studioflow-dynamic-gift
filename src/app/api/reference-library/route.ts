@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
-import { uploadToR2, toAccessibleUrl } from "@/lib/r2";
+import { uploadToR2, downloadFromR2 } from "@/lib/r2";
 import { v4 as uuid } from "uuid";
 
 export const dynamic = "force-dynamic";
@@ -22,27 +21,20 @@ export async function GET(req: NextRequest) {
 
   const industry = req.nextUrl.searchParams.get("industry");
 
-  const conditions = [eq(schema.referenceAdLibrary.isActive, true)];
-  if (industry) {
-    conditions.push(eq(schema.referenceAdLibrary.industry, industry));
+  let items: Record<string, unknown>[] = [];
+  try {
+    const { buffer } = await downloadFromR2("shared/reference-ad-library/manifest.json");
+    const manifest = JSON.parse(buffer.toString("utf-8"));
+    items = (manifest.items || []).filter((item: Record<string, unknown>) => item.isActive !== false);
+  } catch {
+    return NextResponse.json([]);
   }
 
-  const refs = await db
-    .select()
-    .from(schema.referenceAdLibrary)
-    .where(and(...conditions))
-    .orderBy(schema.referenceAdLibrary.sortOrder);
+  if (industry) {
+    items = items.filter((item) => item.industry === industry);
+  }
 
-  // Return both original R2 URL (for backend pipeline) and presigned URL (for display)
-  const withPreviewUrls = await Promise.all(
-    refs.map(async (ref) => ({
-      ...ref,
-      previewUrl: await toAccessibleUrl(ref.imageUrl),
-      // imageUrl stays as the original R2 URL for backend use
-    }))
-  );
-
-  return NextResponse.json(withPreviewUrls);
+  return NextResponse.json(items.map((item) => ({ ...item, previewUrl: item.imageUrl })));
 }
 
 /**

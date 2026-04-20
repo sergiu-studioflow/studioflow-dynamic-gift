@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
-import { db } from "@/lib/db";
-import * as schema from "@/lib/db/schema";
-import { eq, and, sql } from "drizzle-orm";
-import { toAccessibleUrl } from "@/lib/r2";
+import { downloadFromR2 } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/reference-library/random?industry=beauty
- * Return one random active reference from the industry.
- * Includes a presigned URL for preview (R2 is private).
+ * Return one random active reference from the shared R2 manifest.
  */
 export async function GET(req: NextRequest) {
   const authResult = await requireAuth();
@@ -18,23 +14,23 @@ export async function GET(req: NextRequest) {
 
   const industry = req.nextUrl.searchParams.get("industry");
 
-  const conditions = [eq(schema.referenceAdLibrary.isActive, true)];
-  if (industry) {
-    conditions.push(eq(schema.referenceAdLibrary.industry, industry));
-  }
-
-  const [ref] = await db
-    .select()
-    .from(schema.referenceAdLibrary)
-    .where(and(...conditions))
-    .orderBy(sql`random()`)
-    .limit(1);
-
-  if (!ref) {
+  let items: Record<string, unknown>[] = [];
+  try {
+    const { buffer } = await downloadFromR2("shared/reference-ad-library/manifest.json");
+    const manifest = JSON.parse(buffer.toString("utf-8"));
+    items = (manifest.items || []).filter((item: Record<string, unknown>) => item.isActive !== false);
+  } catch {
     return NextResponse.json({ error: "No references found" }, { status: 404 });
   }
 
-  const previewUrl = await toAccessibleUrl(ref.imageUrl);
+  if (industry) {
+    items = items.filter((item) => item.industry === industry);
+  }
 
-  return NextResponse.json({ ...ref, previewUrl });
+  if (items.length === 0) {
+    return NextResponse.json({ error: "No references found" }, { status: 404 });
+  }
+
+  const ref = items[Math.floor(Math.random() * items.length)];
+  return NextResponse.json({ ...ref, previewUrl: ref.imageUrl });
 }

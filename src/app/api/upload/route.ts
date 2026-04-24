@@ -38,7 +38,8 @@ export async function POST(req: NextRequest) {
       }
 
       const ext = filename.split(".").pop() || "bin";
-      const key = `brands/${brandSlug || process.env.BRAND_SLUG || "default"}/${assetType || "uploads"}/${uuid()}.${ext}`;
+      const effectiveBrandSlug = (brandSlug || process.env.BRAND_SLUG || "default").trim();
+      const key = `brands/${effectiveBrandSlug}/${assetType || "uploads"}/${uuid()}.${ext}`;
       const presignedUrl = await getPresignedUploadUrl(key, fileType);
       const publicUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
 
@@ -48,7 +49,8 @@ export async function POST(req: NextRequest) {
     // Mode 2: Direct file upload (FormData)
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
-    const brandSlug = (formData.get("brandSlug") as string) || process.env.BRAND_SLUG || "default";
+    const rawBrandSlug = (formData.get("brandSlug") as string) || process.env.BRAND_SLUG || "default";
+    const brandSlug = rawBrandSlug.trim();
     const assetType = (formData.get("assetType") as string) || "uploads";
 
     if (!file) {

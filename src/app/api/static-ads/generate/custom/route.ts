@@ -3,7 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { analyzeReferenceAd, generateCustomPrompt, getClientAdConfig } from "@/lib/static-ads/custom-pipeline";
+import { analyzeReferenceAd, generateCustomPrompt } from "@/lib/static-ads/custom-pipeline";
 import { submitKieJob } from "@/lib/static-ads/kie-ai";
 import { toAccessibleUrl } from "@/lib/r2";
 
@@ -126,19 +126,9 @@ export async function POST(req: NextRequest) {
       toAccessibleUrl(product.imageUrl!),
     ]);
 
-    // Build image URLs array — include brand logo if configured
-    const imageUrls = [accessibleRefUrl, accessibleProductUrl];
-    try {
-      const config = await getClientAdConfig(clientId);
-      if (config.brandLogoUrl) {
-        const accessibleLogoUrl = await toAccessibleUrl(config.brandLogoUrl);
-        imageUrls.push(accessibleLogoUrl);
-      }
-    } catch { /* config already loaded above, ignore */ }
-
     const kieResult = await submitKieJob({
       prompt: generatedPrompt,
-      imageUrls,
+      imageUrls: [accessibleRefUrl, accessibleProductUrl],
       aspectRatio: resolvedAspectRatio,
     });
 

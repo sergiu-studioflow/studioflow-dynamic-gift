@@ -34,6 +34,7 @@ const CORE_ANGLES = [
   { value: "Price Competitiveness", label: "Price Competitiveness", desc: "Direct importing, no middlemen" },
   { value: "Proof Points & Credibility", label: "Proof Points & Credibility", desc: "2,000+ reviews, major brand clients" },
   { value: "Objection Handling", label: "Objection Handling", desc: "Pre-empt buyer hesitations" },
+  { value: "100% Bespoke", label: "100% Bespoke", desc: "Custom-designed from the ground up" },
 ] as const;
 
 const AD_FORMATS = ["Single Image", "Carousel", "Video"] as const;

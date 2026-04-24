@@ -27,6 +27,7 @@ const CORE_ANGLES = [
   "Price Competitiveness",
   "Proof Points & Credibility",
   "Objection Handling",
+  "100% Bespoke",
 ] as const;
 
 const AD_FORMATS = ["Single Image", "Carousel", "Video"] as const;

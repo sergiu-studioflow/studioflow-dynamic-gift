@@ -109,8 +109,16 @@ export async function deleteFromR2(key: string): Promise<void> {
 }
 
 export function r2Key(brandSlug: string, assetType: string, filename: string): string {
-  if (brandSlug === "demo") return `demo/${assetType}/${filename}`;
-  return `brands/${brandSlug}/${assetType}/${filename}`;
+  const slug = (brandSlug ?? "").trim();
+  const type = (assetType ?? "").trim();
+  if (!SLUG_RE.test(slug)) {
+    throw new Error(`r2Key: invalid brandSlug ${JSON.stringify(brandSlug)} (must match ${SLUG_RE})`);
+  }
+  if (!type || /[\s/]/.test(type)) {
+    throw new Error(`r2Key: invalid assetType ${JSON.stringify(assetType)} (no whitespace or slashes)`);
+  }
+  if (slug === "demo") return `demo/${type}/${filename}`;
+  return `brands/${slug}/${type}/${filename}`;
 }
 
 export function r2Url(key: string): string {

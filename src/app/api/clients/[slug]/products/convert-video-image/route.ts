@@ -4,7 +4,7 @@ import { resolveClientId } from "@/lib/client-api-helpers";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
-import { downloadFromR2, uploadToR2, r2KeyFromUrl, r2Key } from "@/lib/r2";
+import { downloadFromR2, uploadToR2, r2KeyFromUrl } from "@/lib/r2";
 import sharp from "sharp";
 import { randomUUID } from "crypto";
 
@@ -96,9 +96,10 @@ export async function POST(
         .png()
         .toBuffer();
 
-      // Upload to R2 under client's storage prefix
+      // Upload to R2 under client's storage prefix.
+      // storagePrefix is the canonical full key prefix (e.g. "brands/<parent>/<sub>"); do NOT pass to r2Key() which would re-prepend "brands/".
       const filename = `${randomUUID()}.png`;
-      const key = r2Key(storagePrefix, "video-generation/products", filename);
+      const key = `${storagePrefix}/video-generation/products/${filename}`;
       const videoImageUrl = await uploadToR2(key, resized, "image/png");
 
       // Update product

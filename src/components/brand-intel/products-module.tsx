@@ -44,6 +44,7 @@ export function ProductsModule() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const [converting, setConverting] = useState(false);
   const [convertResult, setConvertResult] = useState<{ converted: number; skipped: number; errors: number } | null>(null);
 
@@ -120,6 +121,7 @@ export function ProductsModule() {
 
   const startEdit = (product: Product) => {
     setEditingId(product.id);
+    setUploadError("");
     setEditForm({
       name: product.name,
       visualDescription: product.visualDescription || "",
@@ -157,6 +159,7 @@ export function ProductsModule() {
     if (!file.type.startsWith("image/")) return;
     const setUploadState = field === "imageUrl" ? setUploading : setUploadingVideo;
     setUploadState(true);
+    setUploadError("");
     try {
       let uploadFile: File | Blob = file;
       if (file.size > 4 * 1024 * 1024) {
@@ -168,7 +171,10 @@ export function ProductsModule() {
       formData.append("brandSlug", "dynamic-gift");
       formData.append("assetType", field === "videoImageUrl" ? "video-generation/products" : "products");
       const res = await fetch("/api/upload", { method: "POST", body: formData });
-      if (!res.ok) throw new Error("Upload failed");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Upload failed (${res.status})`);
+      }
       const { url } = await res.json();
       setEditForm((prev) => ({ ...prev, [field]: url }));
       const previewUrl = URL.createObjectURL(uploadFile);
@@ -176,6 +182,7 @@ export function ProductsModule() {
       else setEditPreviewUrls((prev) => ({ ...prev, video: previewUrl }));
     } catch (err) {
       console.error("[upload]", err);
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploadState(false);
     }
@@ -410,6 +417,11 @@ export function ProductsModule() {
                     {/* Edit panel */}
                     {editingId === product.id && (
                       <div className="border-t border-border px-4 py-4 space-y-4 bg-muted/20">
+                        {uploadError && (
+                          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                            Upload failed: {uploadError}
+                          </div>
+                        )}
                         <div className="space-y-1.5">
                           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Product Description</label>
                           <textarea

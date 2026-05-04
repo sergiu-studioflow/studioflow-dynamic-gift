@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { downloadFromR2, uploadToR2, r2KeyFromUrl } from "@/lib/r2";
 import { v4 as uuid } from "uuid";
 import { r2Prefix } from "@/lib/static-ads/config";
+import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +52,9 @@ export async function POST(req: NextRequest) {
 
   // Re-upload to winners library path
   const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpeg";
-  const winnersKey = `${r2Prefix("winners-library")}/${uuid()}.${ext}`;
+  const clientPrefix = generation.clientId ? await getClientStoragePrefix(generation.clientId) : null;
+  const basePrefix = clientPrefix ? `${clientPrefix}/winners-library` : r2Prefix("winners-library");
+  const winnersKey = `${basePrefix}/${uuid()}.${ext}`;
   const imageUrl = await uploadToR2(winnersKey, buffer, contentType);
 
   // Insert into winners_library

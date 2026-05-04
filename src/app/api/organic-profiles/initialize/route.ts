@@ -3,6 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { getAppConfig } from "@/lib/config";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +62,13 @@ export async function POST(request: NextRequest) {
     .update(schema.organicProfiles)
     .set({ trackingStatus: "Processing" })
     .where(eq(schema.organicProfiles.id, profileId));
+  // Resolve client_slug from storage_prefix so the n8n scraper writes media to
+  // brands/<agency>/<client_slug>/scraped/... instead of agency-level scraped/.
+  const resolvedClientId = clientId || profile.clientId;
+  const storagePrefix = resolvedClientId ? await getClientStoragePrefix(resolvedClientId) : null;
+  const clientSlug = storagePrefix ? storagePrefix.split("/").pop() ?? null : null;
+
+
 
   try {
     const res = await fetch(webhookUrl, {
@@ -69,7 +77,8 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         profile_url: profile.profileUrl,
         posts_number: postsNumber,
-        client_id: clientId || profile.clientId,
+        client_id: resolvedClientId,
+        client_slug: clientSlug,
       }),
     });
 

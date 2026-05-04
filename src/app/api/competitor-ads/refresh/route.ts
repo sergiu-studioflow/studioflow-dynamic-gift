@@ -3,6 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { getAppConfig } from "@/lib/config";
 import { eq, desc, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -72,6 +73,11 @@ export async function POST(request: NextRequest) {
     )
     .orderBy(desc(schema.competitorAds.snapshotId))
     .limit(1);
+  // Resolve client_slug from storage_prefix so the n8n scraper writes media to
+  // brands/<agency>/<client_slug>/scraped/... instead of agency-level scraped/.
+  const storagePrefix = await getClientStoragePrefix(clientId);
+  const clientSlug = storagePrefix ? storagePrefix.split("/").pop() ?? null : null;
+
 
   try {
     const res = await fetch(webhookUrl, {
@@ -82,6 +88,7 @@ export async function POST(request: NextRequest) {
           meta_library_url: metaLibraryUrl,
           country,
           client_id: clientId,
+          client_slug: clientSlug,
         },
       ]),
     });

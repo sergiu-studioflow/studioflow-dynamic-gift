@@ -5,6 +5,7 @@ import * as schema from "@/lib/db/schema";
 import { downloadFromR2, uploadToR2, r2KeyFromUrl } from "@/lib/r2";
 import { v4 as uuid } from "uuid";
 import { r2Prefix } from "@/lib/static-ads/config";
+import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
   const { portalUser } = authResult;
 
   const body = await req.json();
-  const { imageUrl, name, brandName, tags } = body;
+  const { imageUrl, name, brandName, tags, clientId } = body;
 
   if (!imageUrl) {
     return NextResponse.json({ error: "imageUrl is required" }, { status: 400 });
@@ -33,15 +34,15 @@ export async function POST(req: NextRequest) {
   const { buffer, contentType } = await downloadFromR2(r2Key);
 
   const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpeg";
-  const winnersKey = `${r2Prefix("winners-library")}/${uuid()}.${ext}`;
+  const clientPrefix = clientId ? await getClientStoragePrefix(clientId) : null;
+  const basePrefix = clientPrefix ? `${clientPrefix}/winners-library` : r2Prefix("winners-library");
+  const winnersKey = `${basePrefix}/${uuid()}.${ext}`;
   const winnerImageUrl = await uploadToR2(winnersKey, buffer, contentType);
 
   const winnerName = name || `${brandName || "Competitor"} - Ad`;
   const [winner] = await db
     .insert(schema.winnersLibrary)
-    .values({
-      userId: portalUser.id,
-      name: winnerName,
+    .values({ userId: portalUser.id, clientId: clientId || null, name: winnerName,
       imageUrl: winnerImageUrl,
       productName: brandName || null,
       tags: tags || null,

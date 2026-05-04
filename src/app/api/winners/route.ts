@@ -6,6 +6,7 @@ import { eq, and } from "drizzle-orm";
 import { uploadToR2, toAccessibleUrl } from "@/lib/r2";
 import { v4 as uuid } from "uuid";
 import { r2Prefix } from "@/lib/static-ads/config";
+import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -66,7 +67,9 @@ export async function POST(req: NextRequest) {
   }
 
   const ext = file.name.split(".").pop() || "jpeg";
-  const key = `${r2Prefix("winners-library")}/${uuid()}.${ext}`;
+  const clientPrefix = clientId ? await getClientStoragePrefix(clientId) : null;
+  const basePrefix = clientPrefix ? `${clientPrefix}/winners-library` : r2Prefix("winners-library");
+  const key = `${basePrefix}/${uuid()}.${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
   const imageUrl = await uploadToR2(key, buffer, file.type);
 

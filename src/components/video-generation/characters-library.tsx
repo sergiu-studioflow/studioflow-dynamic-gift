@@ -82,7 +82,7 @@ function resizeImageForUpload(file: File, maxDim: number, quality: number): Prom
 }
 
 export function CharactersLibrary() {
-  const { clientId } = useClient();
+  const { clientId, clientSlug } = useClient();
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -186,6 +186,8 @@ export function CharactersLibrary() {
       formData.append("file", resizedFile);
       // brandSlug resolved server-side via BRAND_SLUG env var
       formData.append("assetType", "video-generation/characters");
+      formData.append("clientSlug", clientSlug || "");
+
       const res = await fetch("/api/upload", { method: "POST", body: formData });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `Upload failed (${res.status})` }));

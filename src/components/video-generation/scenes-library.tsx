@@ -51,7 +51,7 @@ function resizeImageForUpload(file: File, maxDim: number, quality: number): Prom
 }
 
 export function ScenesLibrary() {
-  const { clientId } = useClient();
+  const { clientId, clientSlug } = useClient();
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -116,6 +116,8 @@ export function ScenesLibrary() {
       formData.append("file", resizedFile);
       // brandSlug resolved server-side via BRAND_SLUG env var
       formData.append("assetType", "video-generation/scenes");
+      formData.append("clientSlug", clientSlug || "");
+
       const res = await fetch("/api/upload", { method: "POST", body: formData });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `Upload failed (${res.status})` }));

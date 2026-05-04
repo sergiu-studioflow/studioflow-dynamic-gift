@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { pollKieJob } from "@/lib/static-ads/kie-ai";
 import { uploadToR2, r2Key, toAccessibleUrl } from "@/lib/r2";
 import { BRAND_SLUG } from "@/lib/static-ads/config";
+import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -54,7 +55,7 @@ export async function GET(
       !generation.imageUrl.includes("studio-flow.co")
     ) {
       try {
-        const r2Url = await downloadAndUploadToR2(generation.imageUrl, generation.id);
+        const r2Url = await downloadAndUploadToR2(generation.imageUrl, generation.id, generation.clientId);
         const [updated] = await db
           .update(schema.staticAdGenerations)
           .set({ imageUrl: r2Url, updatedAt: new Date() })
@@ -132,7 +133,7 @@ export async function GET(
   }
 }
 
-async function downloadAndUploadToR2(sourceUrl: string, generationId: string): Promise<string> {
+async function downloadAndUploadToR2(sourceUrl: string, generationId: string, clientId: string | null): Promise<string> {
   // Retry up to 3 times
   let lastError: Error | null = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -143,7 +144,10 @@ async function downloadAndUploadToR2(sourceUrl: string, generationId: string): P
       const buffer = Buffer.from(await res.arrayBuffer());
       const contentType = res.headers.get("content-type") || "image/png";
       const ext = contentType.includes("jpeg") || contentType.includes("jpg") ? "jpg" : "png";
-      const key = r2Key(BRAND_SLUG, "static-ad-system/generated-ads", `${generationId}.${ext}`);
+      // Per-client R2 prefix when clientId is set; falls back to agency-level for single-brand portals.
+      const clientPrefix = clientId ? await getClientStoragePrefix(clientId) : null;
+      const basePrefix = clientPrefix || `brands/${BRAND_SLUG}`;
+      const key = `${basePrefix}/static-ad-system/generated-ads/${generationId}.${ext}`;
 
       return await uploadToR2(key, buffer, contentType);
     } catch (err) {

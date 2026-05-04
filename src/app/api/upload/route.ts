@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
 
     // Mode 1: Presigned URL request (JSON body)
     if (contentType.includes("application/json")) {
-      const { filename, contentType: fileType, brandSlug, assetType } = await req.json();
+      const { filename, contentType: fileType, brandSlug, clientSlug, assetType } = await req.json();
 
       if (!filename || !fileType) {
         return NextResponse.json({ error: "filename and contentType required" }, { status: 400 });
@@ -39,7 +39,9 @@ export async function POST(req: NextRequest) {
 
       const ext = filename.split(".").pop() || "bin";
       const effectiveBrandSlug = (brandSlug || process.env.BRAND_SLUG || "default").trim();
-      const key = `brands/${effectiveBrandSlug}/${assetType || "uploads"}/${uuid()}.${ext}`;
+      const safeClient = (clientSlug && /^[a-z0-9-]+$/.test(String(clientSlug).trim())) ? String(clientSlug).trim() : null;
+      const pathPrefix = safeClient ? `brands/${effectiveBrandSlug}/${safeClient}` : `brands/${effectiveBrandSlug}`;
+      const key = `${pathPrefix}/${assetType || "uploads"}/${uuid()}.${ext}`;
       const presignedUrl = await getPresignedUploadUrl(key, fileType);
       const publicUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
 
@@ -52,6 +54,8 @@ export async function POST(req: NextRequest) {
     const rawBrandSlug = (formData.get("brandSlug") as string) || process.env.BRAND_SLUG || "default";
     const brandSlug = rawBrandSlug.trim();
     const assetType = (formData.get("assetType") as string) || "uploads";
+    const rawFormClientSlug = ((formData.get("clientSlug") as string) || "").trim();
+    const formClientSlug = /^[a-z0-9-]+$/.test(rawFormClientSlug) ? rawFormClientSlug : null;
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -64,7 +68,8 @@ export async function POST(req: NextRequest) {
     }
 
     const ext = file.name.split(".").pop() || "bin";
-    const key = `brands/${brandSlug}/${assetType}/${uuid()}.${ext}`;
+    const pathPrefix = formClientSlug ? `brands/${brandSlug}/${formClientSlug}` : `brands/${brandSlug}`;
+    const key = `${pathPrefix}/${assetType}/${uuid()}.${ext}`;
     const buffer = Buffer.from(await file.arrayBuffer());
     const url = await uploadToR2(key, buffer, file.type);
 

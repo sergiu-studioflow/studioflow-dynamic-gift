@@ -122,6 +122,7 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
       const formData = new FormData();
       formData.append("file", uploadFile, file.name);
       formData.append("brandSlug", "dynamic-gift");
+      formData.append("clientSlug", clientSlug || "");
       if (clientId) formData.append("clientId", clientId);
       formData.append("assetType", field === "videoImageUrl" ? "video-generation/products" : "products");
       const res = await fetch("/api/upload", { method: "POST", body: formData });

@@ -169,6 +169,9 @@ export function ProductsModule() {
       const formData = new FormData();
       formData.append("file", uploadFile, file.name);
       formData.append("brandSlug", "dynamic-gift");
+      // Agency-level products live under the agency-as-client folder (brands/dynamic-gift/dynamic-gift/...)
+      // for consistency with per-client path isolation.
+      formData.append("clientSlug", "dynamic-gift");
       formData.append("assetType", field === "videoImageUrl" ? "video-generation/products" : "products");
       const res = await fetch("/api/upload", { method: "POST", body: formData });
       if (!res.ok) {

@@ -81,6 +81,7 @@ export function FullViewModal({
           imageUrl: saveableImageUrl,
           name: `${ad.brandPageName} - ${displayAngle || displayHeadline || "Ad"}`,
           brandName: ad.brandPageName,
+          clientId,
         }),
       });
       if (res.ok) setSaved(true);

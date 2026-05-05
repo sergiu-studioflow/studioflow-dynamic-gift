@@ -3,7 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { pollKieJob } from "@/lib/static-ads/kie-ai";
-import { uploadToR2, r2Key, toAccessibleUrl } from "@/lib/r2";
+import { uploadToR2, toAccessibleUrl } from "@/lib/r2";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 
 export const dynamic = "force-dynamic";
@@ -59,8 +59,9 @@ export async function GET(
             const buffer = Buffer.from(await imgRes.arrayBuffer());
             const contentType = imgRes.headers.get("content-type") || "image/png";
             const ext = contentType.includes("jpeg") || contentType.includes("jpg") ? "jpg" : "png";
-            const prefix = await getClientStoragePrefix(character.clientId) || "web-profits";
-            const key = r2Key(prefix, "video-generation/characters", `${character.id}.${ext}`);
+            const clientPrefix = await getClientStoragePrefix(character.clientId);
+            const prefix = clientPrefix || `brands/${process.env.BRAND_SLUG || "dynamic-gift"}`;
+            const key = `${prefix}/video-generation/characters/${character.id}.${ext}`;
             finalImageUrl = await uploadToR2(key, buffer, contentType);
           }
         } catch {

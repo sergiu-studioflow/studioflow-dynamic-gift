@@ -3,16 +3,16 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { pollVideoJob } from "@/lib/video-generation/video-provider";
-import { uploadToR2, r2Key, toAccessibleUrl, r2KeyFromUrl } from "@/lib/r2";
+import { uploadToR2, toAccessibleUrl, r2KeyFromUrl } from "@/lib/r2";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 
 export const dynamic = "force-dynamic";
 
 /** Resolve the R2 storage prefix for a generation's client */
 async function getPrefix(clientId: string | null): Promise<string> {
-  if (!clientId) return "web-profits";
+  if (!clientId) return `brands/${process.env.BRAND_SLUG || "dynamic-gift"}`;
   const prefix = await getClientStoragePrefix(clientId);
-  return prefix || "web-profits";
+  return prefix || `brands/${process.env.BRAND_SLUG || "dynamic-gift"}`;
 }
 
 /**
@@ -55,7 +55,7 @@ export async function GET(
         const contentType = videoRes.headers.get("content-type") || "video/mp4";
         const ext = contentType.includes("webm") ? "webm" : "mp4";
         const prefix = await getPrefix(generation.clientId);
-        const key = r2Key(prefix, "video-generation/outputs", `${generation.id}.${ext}`);
+        const key = `${prefix}/video-generation/outputs/${generation.id}.${ext}`;
         const r2Url = await uploadToR2(key, buffer, contentType);
 
         await db
@@ -93,7 +93,7 @@ export async function GET(
             const contentType = videoRes.headers.get("content-type") || "video/mp4";
             const ext = contentType.includes("webm") ? "webm" : "mp4";
             const prefix = await getPrefix(generation.clientId);
-            const key = r2Key(prefix, "video-generation/outputs", `${generation.id}.${ext}`);
+            const key = `${prefix}/video-generation/outputs/${generation.id}.${ext}`;
             finalVideoUrl = await uploadToR2(key, buffer, contentType);
           }
         } catch {

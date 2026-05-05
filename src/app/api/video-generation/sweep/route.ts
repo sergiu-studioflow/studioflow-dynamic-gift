@@ -3,7 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { pollVideoJob } from "@/lib/video-generation/video-provider";
-import { uploadToR2, r2Key } from "@/lib/r2";
+import { uploadToR2 } from "@/lib/r2";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 
 export const dynamic = "force-dynamic";
@@ -45,10 +45,9 @@ export async function GET() {
             const buffer = Buffer.from(await videoRes.arrayBuffer());
             const contentType = videoRes.headers.get("content-type") || "video/mp4";
             const ext = contentType.includes("webm") ? "webm" : "mp4";
-            const prefix = gen.clientId
-              ? (await getClientStoragePrefix(gen.clientId)) || "web-profits"
-              : "web-profits";
-            const key = r2Key(prefix, "video-generation/outputs", `${gen.id}.${ext}`);
+            const clientPrefix = gen.clientId ? await getClientStoragePrefix(gen.clientId) : null;
+            const prefix = clientPrefix || `brands/${process.env.BRAND_SLUG || "dynamic-gift"}`;
+            const key = `${prefix}/video-generation/outputs/${gen.id}.${ext}`;
             finalVideoUrl = await uploadToR2(key, buffer, contentType);
           }
         } catch {

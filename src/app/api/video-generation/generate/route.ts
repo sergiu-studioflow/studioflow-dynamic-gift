@@ -80,6 +80,9 @@ export async function POST(request: NextRequest) {
     if (!p) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
+    if (p.clientId !== clientId) {
+      return NextResponse.json({ error: "Product belongs to a different client" }, { status: 403 });
+    }
     if (!isAroll && !p.videoImageUrl) {
       return NextResponse.json({ error: "Product has no 9:16 video image" }, { status: 400 });
     }
@@ -95,7 +98,12 @@ export async function POST(request: NextRequest) {
         .select()
         .from(schema.characters)
         .where(eq(schema.characters.id, cid));
-      if (c) characterList.push(c);
+      if (c) {
+        if (c.clientId !== clientId) {
+          return NextResponse.json({ error: "Character belongs to a different client" }, { status: 403 });
+        }
+        characterList.push(c);
+      }
     }
   }
   const character = characterList[0] || null;
@@ -107,7 +115,12 @@ export async function POST(request: NextRequest) {
       .select()
       .from(schema.scenes)
       .where(eq(schema.scenes.id, sceneId));
-    if (s) scene = s;
+    if (s) {
+      if (s.clientId !== clientId) {
+        return NextResponse.json({ error: "Scene belongs to a different client" }, { status: 403 });
+      }
+      scene = s;
+    }
   }
 
   // Create generation record with clientId

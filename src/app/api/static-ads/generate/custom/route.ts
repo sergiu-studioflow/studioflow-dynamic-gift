@@ -59,6 +59,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Product not found" }, { status: 404 });
   }
 
+  if (product.clientId !== clientId) {
+    return NextResponse.json({ error: "Product belongs to a different client" }, { status: 403 });
+  }
+
   if (!product.imageUrl) {
     return NextResponse.json({ error: "Product has no image — required for ad generation" }, { status: 400 });
   }

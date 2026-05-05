@@ -44,6 +44,9 @@ export async function POST(req: NextRequest) {
     if (!ad) {
       return NextResponse.json({ error: "Competitor ad not found" }, { status: 404 });
     }
+    if (ad.clientId !== clientId) {
+      return NextResponse.json({ error: "Competitor ad belongs to a different client" }, { status: 403 });
+    }
     sourceData = ad as unknown as Record<string, unknown>;
     const mt = (ad.mediaType || "").toLowerCase();
     mediaType = mt.includes("video") ? "video" : mt.includes("carousel") ? "carousel" : "static";
@@ -55,6 +58,9 @@ export async function POST(req: NextRequest) {
       .limit(1);
     if (!post) {
       return NextResponse.json({ error: "Organic post not found" }, { status: 404 });
+    }
+    if (post.clientId !== clientId) {
+      return NextResponse.json({ error: "Organic post belongs to a different client" }, { status: 403 });
     }
     sourceData = post as unknown as Record<string, unknown>;
     const ct = (post.contentType || "").toLowerCase();

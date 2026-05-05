@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   const { portalUser } = authResult;
 
   const body = await req.json();
-  const { generationId, name, tags } = body;
+  const { generationId, name, tags, clientId: bodyClientId } = body;
 
   if (!generationId) {
     return NextResponse.json({ error: "generationId is required" }, { status: 400 });
@@ -40,6 +40,10 @@ export async function POST(req: NextRequest) {
 
   if (generation.status !== "completed" || !generation.imageUrl) {
     return NextResponse.json({ error: "Generation is not completed or has no image" }, { status: 400 });
+  }
+
+  if (bodyClientId && generation.clientId !== bodyClientId) {
+    return NextResponse.json({ error: "Generation belongs to a different client" }, { status: 403 });
   }
 
   // Download image from the generation's R2 URL

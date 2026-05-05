@@ -31,6 +31,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Image URL is not from a recognized R2 source" }, { status: 400 });
   }
 
+  // Verify imageUrl path belongs to this client (defends against saving another client\'s assets).
+  if (clientId) {
+    const expectedPrefix = await getClientStoragePrefix(clientId);
+    if (expectedPrefix && !r2Key.startsWith(`${expectedPrefix}/`)) {
+      return NextResponse.json({ error: "Image does not belong to this client" }, { status: 403 });
+    }
+  }
+
   const { buffer, contentType } = await downloadFromR2(r2Key);
 
   const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpeg";

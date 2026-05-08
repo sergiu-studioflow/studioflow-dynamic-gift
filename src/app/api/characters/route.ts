@@ -2,7 +2,7 @@ import { db, schema } from "@/lib/db";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { asc, eq, inArray, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
-import { toAccessibleUrl } from "@/lib/r2";
+import { toAccessibleUrl, deleteFromR2, r2KeyFromUrl } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 
@@ -76,6 +76,23 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "No ids provided" }, { status: 400 });
   }
 
+  // Read rows first so we can clean up R2 after the DB delete.
+  const rows = await db
+    .select({ id: schema.characters.id, imageUrl: schema.characters.imageUrl, sourceImageUrl: schema.characters.sourceImageUrl })
+    .from(schema.characters)
+    .where(inArray(schema.characters.id, ids));
+
   await db.delete(schema.characters).where(inArray(schema.characters.id, ids));
+
+  // Best-effort R2 cleanup; logged-and-swallowed failures don't block the response.
+  for (const row of rows) {
+    for (const url of [row.imageUrl, row.sourceImageUrl]) {
+      if (!url) continue;
+      const key = r2KeyFromUrl(url);
+      if (!key) continue;
+      try { await deleteFromR2(key); } catch (err) { console.warn(`[characters/DELETE] R2 cleanup failed for ${url}:`, err); }
+    }
+  }
+
   return NextResponse.json({ success: true });
 }

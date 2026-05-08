@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 const handlers = createItemHandlers({
   table: schema.clientProducts as any,
   resourceName: "products",
+  imageUrlFields: ["imageUrl", "videoImageUrl"],
 });
 
 export const GET = handlers.GET;

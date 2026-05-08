@@ -185,7 +185,12 @@ export function CharactersLibrary() {
       const formData = new FormData();
       formData.append("file", resizedFile);
       // brandSlug resolved server-side via BRAND_SLUG env var
-      formData.append("assetType", "video-generation/characters");
+      // "gen" uploads are reference inputs to AI generation, not library entries —
+      // keep them under characters/uploaded/ so they're separable from final images.
+      const assetType = target === "gen"
+        ? "video-generation/characters/uploaded"
+        : "video-generation/characters";
+      formData.append("assetType", assetType);
       formData.append("clientSlug", clientSlug || "");
 
       const res = await fetch("/api/upload", { method: "POST", body: formData });

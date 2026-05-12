@@ -124,15 +124,34 @@ export async function POST(req: NextRequest) {
     .returning();
 
   try {
+    // Load brand logos so Nano Banana can reproduce them faithfully
+    const [brandConfig] = await db
+      .select({
+        brandLogoUrl: schema.clientStaticAdConfig.brandLogoUrl,
+        brandLogoWhiteUrl: schema.clientStaticAdConfig.brandLogoWhiteUrl,
+      })
+      .from(schema.clientStaticAdConfig)
+      .where(eq(schema.clientStaticAdConfig.clientId, clientId))
+      .limit(1);
+
     // Generate presigned URLs so Kie AI can download from private R2 bucket
     const [accessibleRefUrl, accessibleProductUrl] = await Promise.all([
       toAccessibleUrl(referenceImageUrl),
       toAccessibleUrl(product.imageUrl!),
     ]);
 
+    // Build image URLs: [reference ad, product, logo-color, logo-white]
+    const imageUrls: string[] = [accessibleRefUrl, accessibleProductUrl];
+    if (brandConfig?.brandLogoUrl) {
+      imageUrls.push(await toAccessibleUrl(brandConfig.brandLogoUrl));
+    }
+    if (brandConfig?.brandLogoWhiteUrl) {
+      imageUrls.push(await toAccessibleUrl(brandConfig.brandLogoWhiteUrl));
+    }
+
     const kieResult = await submitKieJob({
       prompt: generatedPrompt,
-      imageUrls: [accessibleRefUrl, accessibleProductUrl],
+      imageUrls,
       aspectRatio: resolvedAspectRatio,
     });
 

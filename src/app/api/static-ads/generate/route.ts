@@ -91,10 +91,28 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
-    // Build image URLs for Kie AI
+    // Load brand logos so Nano Banana can reproduce them faithfully
+    let brandLogoUrl: string | null = null;
+    let brandLogoWhiteUrl: string | null = null;
+    if (clientId) {
+      const [brandConfig] = await db
+        .select({
+          brandLogoUrl: schema.clientStaticAdConfig.brandLogoUrl,
+          brandLogoWhiteUrl: schema.clientStaticAdConfig.brandLogoWhiteUrl,
+        })
+        .from(schema.clientStaticAdConfig)
+        .where(eq(schema.clientStaticAdConfig.clientId, clientId))
+        .limit(1);
+      brandLogoUrl = brandConfig?.brandLogoUrl ?? null;
+      brandLogoWhiteUrl = brandConfig?.brandLogoWhiteUrl ?? null;
+    }
+
+    // Build image URLs for Kie AI: [reference ad, product, logo-color, logo-white]
     const imageUrls: string[] = [];
     if (style.referenceImageUrl) imageUrls.push(style.referenceImageUrl);
     if (product.imageUrl) imageUrls.push(product.imageUrl);
+    if (brandLogoUrl) imageUrls.push(brandLogoUrl);
+    if (brandLogoWhiteUrl) imageUrls.push(brandLogoWhiteUrl);
 
     // Submit to Kie AI
     try {

@@ -398,6 +398,7 @@ export const clientStaticAdConfig = pgTable("client_static_ad_config", {
   agent1Prompt: text("agent1_prompt").notNull(),
   agent2Prompt: text("agent2_prompt").notNull(),
   brandLogoUrl: text("brand_logo_url"),
+  brandLogoWhiteUrl: text("brand_logo_white_url"),
   allowedIndustries: text("allowed_industries").default("[]"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

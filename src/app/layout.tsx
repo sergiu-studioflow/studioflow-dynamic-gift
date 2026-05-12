@@ -1,21 +1,32 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Nunito } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const nunito = Nunito({
+  variable: "--font-nunito",
   subsets: ["latin"],
+  weight: ["400", "600", "700", "800"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#F7F9FB" },
+    { media: "(prefers-color-scheme: dark)", color: "#0B1622" },
+  ],
+};
 
 export const metadata: Metadata = {
   title: "Dynamic Gift Creative Studio",
-  description: "Dynamic Gift AI-powered creative production portal by StudioFlow",
+  description:
+    "Dynamic Gift's internal creative ops studio — brand intelligence, content ideation, video briefs, ad copy, and creative generation for promotional products.",
+  openGraph: {
+    title: "Dynamic Gift Creative Studio",
+    description:
+      "Dynamic Gift's internal creative ops studio — brand intelligence, content ideation, video briefs, ad copy, and creative generation for promotional products.",
+    images: ["/dynamic-gift-logo.png"],
+    type: "website",
+  },
 };
 
 export default function RootLayout({
@@ -25,9 +36,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${nunito.variable} antialiased`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

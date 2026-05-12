@@ -377,7 +377,7 @@ export function CharactersLibrary() {
                     className={cn(
                       "flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-xs font-semibold transition-all",
                       genName.trim() && genSourceUrl
-                        ? "bg-primary text-primary-foreground hover:brightness-110 shadow-[0_0_15px_rgba(178,255,0,0.15)]"
+                        ? "bg-primary text-primary-foreground hover:brightness-110 shadow-[0_0_15px_rgba(35,195,232,0.15)]"
                         : "bg-muted text-muted-foreground cursor-not-allowed"
                     )}>
                     <Sparkles className="h-3.5 w-3.5" />

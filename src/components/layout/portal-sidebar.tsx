@@ -64,30 +64,25 @@ export function PortalSidebar({ brandName, features, userEmail }: PortalSidebarP
 
   return (
     <aside className="flex h-screen w-[260px] flex-col bg-sidebar">
-      {/* Logo Section — StudioFlow × Client */}
-      <div className="flex h-[80px] items-center justify-center relative">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_50%,hsla(79,100%,50%,0.08)_0%,transparent_70%)] pointer-events-none" />
-        <div className="flex items-center gap-3 relative z-10">
-          <div className="group/sf rounded-xl transition-all duration-200 hover:scale-105 hover:shadow-[0_0_16px_rgba(178,255,0,0.25)]">
-            <Image
-              src="/studioflow-logo.png"
-              alt="StudioFlow"
-              width={40}
-              height={40}
-              className="rounded-xl transition-all duration-200 group-hover/sf:brightness-110"
-            />
-          </div>
-          <span className="text-sm font-light text-sidebar-muted">×</span>
-          <div className="group/cl rounded-xl transition-all duration-200 hover:scale-105">
-            <Image
-              src="/client-logo.png"
-              alt={brandName}
-              width={40}
-              height={40}
-              className="rounded-xl transition-all duration-200 group-hover/cl:brightness-110"
-            />
-          </div>
-        </div>
+      {/* Logo Section — Dynamic Gift wordmark */}
+      <div className="flex h-[96px] flex-col items-center justify-center gap-1 relative px-5">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_50%,hsla(191,81%,53%,0.18)_0%,transparent_70%)] pointer-events-none" />
+        <Link
+          href="/dashboard"
+          className="relative z-10 flex flex-col items-center gap-1 transition-all duration-200 hover:scale-[1.02]"
+        >
+          <Image
+            src="/dynamic-gift-logo-light.png"
+            alt={brandName || "Dynamic Gift"}
+            width={160}
+            height={56}
+            priority
+            className="h-auto w-[160px]"
+          />
+          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sidebar-muted">
+            Creative Studio
+          </span>
+        </Link>
       </div>
 
       <div className="mx-5 h-px bg-white/10" />
@@ -107,7 +102,7 @@ export function PortalSidebar({ brandName, features, userEmail }: PortalSidebarP
                 "flex items-center gap-3 rounded-lg text-sm font-medium transition-all duration-150 border-l-[3px]",
                 "py-3",
                 isActive
-                  ? "bg-sidebar-active text-black shadow-xs border-l-black/20 pl-[calc(0.75rem-3px)] pr-3"
+                  ? "bg-sidebar-active text-white shadow-xs border-l-white/30 pl-[calc(0.75rem-3px)] pr-3"
                   : "text-white/55 hover:text-white hover:bg-white/10 border-l-transparent pl-[calc(0.75rem-3px)] pr-3"
               )}
             >

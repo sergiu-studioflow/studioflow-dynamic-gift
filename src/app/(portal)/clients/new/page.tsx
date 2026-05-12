@@ -45,7 +45,7 @@ export default function NewClientPage() {
     primaryMarket: "",
     currency: "",
     cluster: "",
-    brandColor: "#b2ff00",
+    brandColor: "#23c3e8",
     notes: "",
   });
 
@@ -133,7 +133,7 @@ export default function NewClientPage() {
               onClick={() => i < step && setStep(i)}
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition-all",
-                i < step && "bg-[var(--brand-primary,#b2ff00)] text-black cursor-pointer",
+                i < step && "bg-[var(--brand-primary,#23c3e8)] text-black cursor-pointer",
                 i === step && "bg-foreground text-background",
                 i > step && "bg-muted text-muted-foreground"
               )}
@@ -144,7 +144,7 @@ export default function NewClientPage() {
               <p className="text-xs font-medium">{s.title}</p>
             </div>
             {i < steps.length - 1 && (
-              <div className={cn("mx-1 h-px w-8 bg-border", i < step && "bg-[var(--brand-primary,#b2ff00)]")} />
+              <div className={cn("mx-1 h-px w-8 bg-border", i < step && "bg-[var(--brand-primary,#23c3e8)]")} />
             )}
           </div>
         ))}
@@ -352,7 +352,7 @@ export default function NewClientPage() {
             <button
               onClick={handleCreate}
               disabled={isSubmitting}
-              className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand-primary,#b2ff00)] px-5 py-2 text-sm font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand-primary,#23c3e8)] px-5 py-2 text-sm font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {isSubmitting ? (
                 <>

@@ -1,68 +1,70 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 @layer base {
-  /* ─── Light Theme — StudioFlow palette (dark/neon-green/white) ─── */
+  /* ─── Light Theme — Dynamic Gift ─── */
   :root {
-    --background: 0 0% 97%;
-    --foreground: 0 0% 5%;
+    --background: 210 33% 98%;
+    --foreground: 213 22% 11%;
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 5%;
+    --card-foreground: 213 22% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 5%;
-    --primary: 79 100% 38%;
-    --primary-foreground: 0 0% 0%;
-    --secondary: 0 0% 93%;
-    --secondary-foreground: 0 0% 5%;
-    --muted: 0 0% 93%;
-    --muted-foreground: 0 0% 42%;
-    --accent: 0 0% 93%;
-    --accent-foreground: 0 0% 5%;
-    --destructive: 0 84% 60%;
+    --popover-foreground: 213 22% 11%;
+    --primary: 191 81% 53%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 39 95% 95%;
+    --secondary-foreground: 213 22% 11%;
+    --muted: 210 22% 94%;
+    --muted-foreground: 213 14% 42%;
+    --accent: 39 100% 50%;
+    --accent-foreground: 213 22% 11%;
+    --destructive: 0 75% 52%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 87%;
-    --input: 0 0% 89%;
-    --ring: 79 100% 38%;
+    --border: 210 18% 88%;
+    --input: 210 18% 88%;
+    --ring: 191 81% 53%;
     --radius: 0.75rem;
 
-    /* Layered shadows */
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
-    --shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 2px 4px rgba(0, 0, 0, 0.05), 0 12px 24px rgba(0, 0, 0, 0.05);
-    --shadow-card-hover: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 4px 8px rgba(0, 0, 0, 0.07), 0 24px 48px rgba(0, 0, 0, 0.07);
-    --shadow-elevated: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 8px 16px rgba(0, 0, 0, 0.07), 0 32px 64px rgba(0, 0, 0, 0.09);
-    --shadow-dialog: 0 24px 80px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.05);
+    /* Layered shadows — tinted with the deep brand dark for cohesive warmth-on-light */
+    --shadow-xs: 0 1px 2px hsla(210, 56%, 9%, 0.06);
+    --shadow-card: 0 0 0 1px hsla(210, 56%, 9%, 0.04), 0 2px 4px hsla(210, 56%, 9%, 0.05), 0 12px 24px hsla(210, 56%, 9%, 0.06);
+    --shadow-card-hover: 0 0 0 1px hsla(210, 56%, 9%, 0.06), 0 4px 8px hsla(210, 56%, 9%, 0.08), 0 24px 48px hsla(210, 56%, 9%, 0.08);
+    --shadow-elevated: 0 0 0 1px hsla(210, 56%, 9%, 0.06), 0 8px 16px hsla(210, 56%, 9%, 0.08), 0 32px 64px hsla(210, 56%, 9%, 0.10);
+    --shadow-dialog: 0 24px 80px hsla(210, 56%, 9%, 0.16), 0 0 0 1px hsla(210, 56%, 9%, 0.06);
 
-    /* Brand accent — neon green #b2ff00 */
-    --brand: 79 100% 50%;
-    --brand-foreground: 0 0% 0%;
+    /* Brand spine */
+    --brand: 191 81% 53%;
+    --brand-foreground: 0 0% 100%;
 
-    /* Sidebar — StudioFlow dark (always dark, both modes) */
-    --sidebar: 0 0% 5%;
-    --sidebar-foreground: 0 0% 100%;
-    --sidebar-muted: 0 0% 45%;
-    --sidebar-active: 79 100% 50%;
+    /* Sidebar — CONSTANT across themes (brand anchor) */
+    --sidebar: 210 56% 9%;
+    --sidebar-foreground: 210 20% 96%;
+    --sidebar-muted: 210 14% 65%;
+    --sidebar-active: 191 81% 53%;
+    --sidebar-hover: 210 45% 14%;
   }
 
-  /* ─── Dark Theme — StudioFlow exact (#0d0d0d, #121212, #242424, #b2ff00) ─── */
+  /* ─── Dark Theme — Dynamic Gift ─── */
   .dark {
-    --background: 0 0% 5%;
-    --foreground: 0 0% 90%;
-    --card: 0 0% 7%;
-    --card-foreground: 0 0% 90%;
-    --popover: 0 0% 7%;
-    --popover-foreground: 0 0% 90%;
-    --primary: 79 100% 50%;
-    --primary-foreground: 0 0% 0%;
-    --secondary: 0 0% 9%;
-    --secondary-foreground: 0 0% 90%;
-    --muted: 0 0% 9%;
-    --muted-foreground: 0 0% 55%;
-    --accent: 0 0% 11%;
-    --accent-foreground: 0 0% 90%;
-    --destructive: 0 72% 51%;
+    --background: 210 56% 9%;
+    --foreground: 210 20% 96%;
+    --card: 210 45% 12%;
+    --card-foreground: 210 20% 96%;
+    --popover: 210 45% 12%;
+    --popover-foreground: 210 20% 96%;
+    --primary: 191 81% 60%;
+    --primary-foreground: 210 56% 9%;
+    --secondary: 210 38% 15%;
+    --secondary-foreground: 210 20% 96%;
+    --muted: 210 35% 16%;
+    --muted-foreground: 210 14% 70%;
+    --accent: 39 100% 55%;
+    --accent-foreground: 210 56% 9%;
+    --destructive: 0 65% 55%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 14%;
-    --input: 0 0% 14%;
-    --ring: 79 100% 50%;
+    --border: 210 28% 20%;
+    --input: 210 28% 20%;
+    --ring: 191 81% 60%;
     --radius: 0.75rem;
 
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -71,14 +73,15 @@
     --shadow-elevated: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 16px rgba(0, 0, 0, 0.35), 0 32px 64px rgba(0, 0, 0, 0.4);
     --shadow-dialog: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06);
 
-    --brand: 79 100% 50%;
-    --brand-foreground: 0 0% 0%;
+    --brand: 191 81% 60%;
+    --brand-foreground: 210 56% 9%;
 
-    /* Sidebar — matches dark bg */
-    --sidebar: 0 0% 4%;
-    --sidebar-foreground: 0 0% 100%;
-    --sidebar-muted: 0 0% 45%;
-    --sidebar-active: 79 100% 50%;
+    /* Sidebar stays Dynamic Gift cyan-dark — constant across themes */
+    --sidebar: 210 56% 9%;
+    --sidebar-foreground: 210 20% 96%;
+    --sidebar-muted: 210 14% 65%;
+    --sidebar-active: 191 81% 53%;
+    --sidebar-hover: 210 45% 14%;
   }
 }
 
@@ -108,6 +111,7 @@
   --color-sidebar-foreground: hsl(var(--sidebar-foreground));
   --color-sidebar-muted: hsl(var(--sidebar-muted));
   --color-sidebar-active: hsl(var(--sidebar-active));
+  --color-sidebar-hover: hsl(var(--sidebar-hover));
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -117,8 +121,9 @@
   --shadow-card-hover: var(--shadow-card-hover);
   --shadow-elevated: var(--shadow-elevated);
   --shadow-dialog: var(--shadow-dialog);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-nunito);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Mono", monospace;
+  --font-display: var(--font-nunito);
 }
 
 @layer base {
@@ -130,10 +135,17 @@
     font-feature-settings: "rlig" 1, "calt" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background-image: radial-gradient(ellipse 80% 50% at 50% -10%, hsla(79, 100%, 38%, 0.04) 0%, transparent 55%);
+    background-image: radial-gradient(ellipse 80% 50% at 50% -10%, hsla(191, 81%, 53%, 0.05) 0%, transparent 55%);
   }
   .dark body {
-    background-image: radial-gradient(ellipse 80% 50% at 50% -20%, hsla(79, 100%, 50%, 0.07) 0%, transparent 60%);
+    background-image: radial-gradient(ellipse 80% 50% at 50% -20%, hsla(191, 81%, 60%, 0.08) 0%, transparent 60%);
+  }
+
+  /* Display typography — Nunito heavy + tight tracking for hero headlines */
+  .font-display {
+    font-family: var(--font-nunito), system-ui, sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.02em;
   }
 
   /* Global table header typography */
@@ -154,17 +166,17 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(0 0% 78%);
+  background: hsl(210 14% 75%);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(0 0% 64%);
+  background: hsl(191 81% 45%);
 }
 .dark ::-webkit-scrollbar-thumb {
-  background: hsl(0 0% 22%);
+  background: hsl(210 28% 22%);
 }
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: hsl(0 0% 32%);
+  background: hsl(191 81% 50%);
 }
 
 /* Only show scrollbar on hover */
@@ -173,10 +185,10 @@
   scrollbar-color: transparent transparent;
 }
 *:hover {
-  scrollbar-color: hsl(0 0% 78%) transparent;
+  scrollbar-color: hsl(210 14% 75%) transparent;
 }
 .dark *:hover {
-  scrollbar-color: hsl(0 0% 22%) transparent;
+  scrollbar-color: hsl(210 28% 22%) transparent;
 }
 
 /* Smooth transitions for theme switching */
@@ -241,7 +253,7 @@ html {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: linear-gradient(180deg, hsla(79, 100%, 50%, 0.04) 0%, transparent 40%);
+  background: linear-gradient(180deg, hsla(191, 81%, 60%, 0.05) 0%, transparent 40%);
   pointer-events: none;
   z-index: 0;
 }

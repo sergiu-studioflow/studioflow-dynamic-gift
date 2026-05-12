@@ -166,7 +166,7 @@ export function ClientSwitcher() {
                 {clients.length}
               </span>
               {isAllClients && (
-                <div className="h-1.5 w-1.5 rounded-full bg-[var(--brand-primary,#b2ff00)]" />
+                <div className="h-1.5 w-1.5 rounded-full bg-[var(--brand-primary,#23c3e8)]" />
               )}
             </button>
 
@@ -228,7 +228,7 @@ export function ClientSwitcher() {
                         </span>
                       )}
                       {isSelected && (
-                        <div className="ml-auto h-1.5 w-1.5 rounded-full bg-[var(--brand-primary,#b2ff00)] flex-shrink-0" />
+                        <div className="ml-auto h-1.5 w-1.5 rounded-full bg-[var(--brand-primary,#23c3e8)] flex-shrink-0" />
                       )}
                     </button>
                   );

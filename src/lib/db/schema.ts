@@ -87,7 +87,7 @@ export const users = pgTable("users", {
 export const appConfig = pgTable("app_config", {
   id: uuid("id").primaryKey().defaultRandom(),
   brandName: text("brand_name").notNull(),
-  brandColor: text("brand_color").default("#b2ff00"),
+  brandColor: text("brand_color").default("#23c3e8"),
   logoUrl: text("logo_url"),
   portalTitle: text("portal_title"),
   features: jsonb("features").notNull().default({}),

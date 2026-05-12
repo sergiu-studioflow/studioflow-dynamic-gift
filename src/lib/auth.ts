@@ -35,7 +35,7 @@ export const auth = betterAuth({
         }
         const { Resend } = await import("resend");
         const resend = new Resend(process.env.RESEND_API_KEY);
-        const fromName = process.env.RESEND_FROM_NAME || "StudioFlow";
+        const fromName = process.env.RESEND_FROM_NAME || "Dynamic Gift";
         const fromEmail = process.env.RESEND_FROM_EMAIL || "noreply@portal.studio-flow.co";
         const { error } = await resend.emails.send({
           from: `${fromName} <${fromEmail}>`,
@@ -46,7 +46,7 @@ export const auth = betterAuth({
               <p style="font-size: 15px; color: #111; margin-bottom: 24px;">
                 Click the button below to sign in to your portal. This link expires in 24 hours.
               </p>
-              <a href="${url}" style="display: inline-block; background: #b2ff00; color: #000; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 500;">
+              <a href="${url}" style="display: inline-block; background: #23c3e8; color: #000; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 500;">
                 Sign in to your portal
               </a>
               <p style="margin-top: 24px; font-size: 13px; color: #666;">

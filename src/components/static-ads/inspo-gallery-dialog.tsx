@@ -164,7 +164,7 @@ export function InspoGalleryDialog({ open, onClose, onSelect }: InspoGalleryDial
                 <button
                   key={ref.id}
                   onClick={() => handleSelect(ref)}
-                  className="group relative rounded-xl border border-border bg-card overflow-hidden hover:border-primary/60 hover:shadow-[0_0_12px_rgba(178,255,0,0.1)] transition-all duration-200 text-left"
+                  className="group relative rounded-xl border border-border bg-card overflow-hidden hover:border-primary/60 hover:shadow-[0_0_12px_rgba(35,195,232,0.1)] transition-all duration-200 text-left"
                 >
                   <div className="aspect-[3/4] bg-muted/30 overflow-hidden">
                     <img

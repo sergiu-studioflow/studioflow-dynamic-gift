@@ -35,16 +35,30 @@ export default function LoginPage() {
       <div className="animate-fade-up w-full max-w-[380px] space-y-8 px-4">
         {/* Logo / Brand */}
         <div className="text-center">
-          <div className="mx-auto flex items-center justify-center gap-3">
-            <Image src="/studioflow-logo.png" alt="StudioFlow" width={40} height={40} className="rounded-xl" />
-            <span className="text-sm font-light text-muted-foreground">×</span>
-            <Image src="/client-logo.png" alt="Client" width={40} height={40} className="rounded-xl" />
+          <div className="mx-auto flex items-center justify-center">
+            <Image
+              src="/dynamic-gift-logo.png"
+              alt="Dynamic Gift"
+              width={200}
+              height={70}
+              priority
+              className="h-auto w-[200px] dark:hidden"
+            />
+            <Image
+              src="/dynamic-gift-logo-light.png"
+              alt="Dynamic Gift"
+              width={200}
+              height={70}
+              priority
+              className="hidden h-auto w-[200px] dark:block"
+            />
           </div>
-          <h1 className="mt-5 text-xl font-semibold tracking-tight text-foreground">
-            Welcome back
+          <h1 className="mt-6 text-xl font-semibold tracking-tight text-foreground">
+            Welcome to your{" "}
+            <span className="font-display font-extrabold text-primary">Creative Studio</span>
           </h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Sign in to your creative studio
+          <p className="mt-2 text-sm text-muted-foreground">
+            Sign in with your Dynamic Gift work email.
           </p>
         </div>
 

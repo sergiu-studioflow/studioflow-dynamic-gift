@@ -447,7 +447,7 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
                 className={cn(
                   "group relative flex flex-col items-center gap-4 rounded-2xl border-2 p-8 text-center transition-all duration-200",
                   type.available
-                    ? "border-border hover:border-primary hover:bg-primary/5 hover:shadow-[0_0_30px_rgba(178,255,0,0.1)] cursor-pointer"
+                    ? "border-border hover:border-primary hover:bg-primary/5 hover:shadow-[0_0_30px_rgba(35,195,232,0.1)] cursor-pointer"
                     : "border-border/50 opacity-50 cursor-not-allowed"
                 )}
               >
@@ -516,7 +516,7 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
                 className={cn(
                   "group relative flex flex-col items-center gap-3 rounded-2xl border-2 p-6 text-center transition-all duration-200",
                   style.available
-                    ? "border-border hover:border-primary hover:bg-primary/5 hover:shadow-[0_0_30px_rgba(178,255,0,0.1)] cursor-pointer"
+                    ? "border-border hover:border-primary hover:bg-primary/5 hover:shadow-[0_0_30px_rgba(35,195,232,0.1)] cursor-pointer"
                     : "border-border/50 opacity-50 cursor-not-allowed"
                 )}
               >
@@ -967,7 +967,7 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
             className={cn(
               "flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition-all duration-200",
               canGenerate
-                ? "bg-primary text-primary-foreground hover:brightness-110 shadow-[0_0_20px_rgba(178,255,0,0.2)]"
+                ? "bg-primary text-primary-foreground hover:brightness-110 shadow-[0_0_20px_rgba(35,195,232,0.2)]"
                 : "bg-muted text-muted-foreground cursor-not-allowed"
             )}
           >

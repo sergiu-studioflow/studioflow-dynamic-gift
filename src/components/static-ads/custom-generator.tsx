@@ -319,7 +319,7 @@ export function CustomGenerator({ products, onGalleryRefresh }: CustomGeneratorP
             className={cn(
               "flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition-all duration-200",
               canGenerate
-                ? "bg-primary text-primary-foreground hover:brightness-110 shadow-[0_0_20px_rgba(178,255,0,0.2)]"
+                ? "bg-primary text-primary-foreground hover:brightness-110 shadow-[0_0_20px_rgba(35,195,232,0.2)]"
                 : "bg-muted text-muted-foreground cursor-not-allowed"
             )}
           >

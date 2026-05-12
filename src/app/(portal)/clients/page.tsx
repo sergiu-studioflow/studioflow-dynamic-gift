@@ -49,7 +49,7 @@ export default function ClientsPage() {
         </div>
         <Link
           href="/clients/new"
-          className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand-primary,#b2ff00)] px-4 py-2 text-sm font-medium text-black transition-opacity hover:opacity-90"
+          className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand-primary,#23c3e8)] px-4 py-2 text-sm font-medium text-black transition-opacity hover:opacity-90"
         >
           <Plus className="h-4 w-4" />
           Add Client

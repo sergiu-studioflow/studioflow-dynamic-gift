@@ -346,6 +346,10 @@ export const staticAdGenerations = pgTable("static_ad_generations", {
   referenceImageUrl: text("reference_image_url"),
   adCopy: text("ad_copy"),
   analysisJson: text("analysis_json"),
+  batchId: uuid("batch_id"),
+  batchSize: integer("batch_size").notNull().default(1),
+  batchIndex: integer("batch_index").notNull().default(1),
+  sourceGenerationId: uuid("source_generation_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

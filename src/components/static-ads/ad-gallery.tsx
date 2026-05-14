@@ -31,8 +31,8 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
       const params = new URLSearchParams();
       if (filter !== "all") params.set("status", filter);
       if (clientId) params.set("clientId", clientId);
-      const qs = params.toString();
-      const url = `/api/static-ads/gallery${qs ? `?${qs}` : ""}`;
+      params.set("groupByBatch", "true");
+      const url = `/api/static-ads/gallery?${params.toString()}`;
       const res = await fetch(url);
       const data = await res.json();
       if (Array.isArray(data)) setGenerations(data);

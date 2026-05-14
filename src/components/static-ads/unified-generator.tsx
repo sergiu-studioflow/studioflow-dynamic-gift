@@ -17,7 +17,19 @@ import {
   Pencil,
   RectangleHorizontal,
   Trophy,
+  Download as DownloadIcon,
+  Copy as CopyIcon,
+  Gauge,
+  ChevronLeft,
+  ChevronRight,
+  Maximize2,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { ReferenceUpload } from "./reference-upload";
 import { StepProgress, type Step } from "./step-progress";
@@ -46,11 +58,30 @@ type AutoReference = {
   previewUrl: string; // presigned URL (for display)
 };
 
+type VariationStatus = "pending" | "completed" | "error";
+
+type VariationResult = {
+  id: string;
+  status: VariationStatus;
+  imageUrl?: string;
+  errorMessage?: string;
+  /** Server hint for which step of the chain this id is currently in. */
+  kieState?: "waiting-source" | "processing" | "pending" | string;
+};
+
+type FormatGroup = {
+  aspectRatio: string;
+  batchId: string;
+  results: VariationResult[]; // refined ids only — intermediates are server-only
+};
+
 type PipelineState =
   | { phase: "idle" }
-  | { phase: "pipeline"; currentStep: number }
-  | { phase: "generating"; generationId: string }
-  | { phase: "completed"; generationId: string; imageUrl: string }
+  | { phase: "pipeline"; currentStep: number; variationCount: number; formatCount: number }
+  | {
+      phase: "generating";
+      formats: FormatGroup[];
+    }
   | { phase: "error"; message: string; failedStep?: number };
 
 const STEP_TIMINGS = [
@@ -76,15 +107,41 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
   const [autoRef, setAutoRef] = useState<AutoReference | null>(null);
   const [autoLoading, setAutoLoading] = useState(false);
   const [adCopy, setAdCopy] = useState("");
-  const [aspectRatio, setAspectRatio] = useState("auto");
+  // Multi-format: a Set so order is preserved roughly. "auto" is mutually
+  // exclusive with explicit ratios — the UI handlers below enforce this.
+  const [aspectRatios, setAspectRatios] = useState<Set<string>>(() => new Set(["1:1"]));
+  const [resolution, setResolution] = useState<"1K" | "2K" | "4K">("2K");
+  const [variationCount, setVariationCount] = useState(1);
   const [inspoOpen, setInspoOpen] = useState(false);
   const [winnersOpen, setWinnersOpen] = useState(false);
   const [winnerRef, setWinnerRef] = useState<AutoReference | null>(null);
   const [winnerLoading, setWinnerLoading] = useState(false);
-  const [savingToWinners, setSavingToWinners] = useState(false);
-  const [savedToWinners, setSavedToWinners] = useState(false);
+  const [savedWinnerIds, setSavedWinnerIds] = useState<Set<string>>(new Set());
+  const [savingWinnerIds, setSavingWinnerIds] = useState<Set<string>>(new Set());
   const [state, setState] = useState<PipelineState>({ phase: "idle" });
+  // Lightbox now identifies a tile within a specific format group.
+  const [lightboxIndex, setLightboxIndex] = useState<
+    { formatIndex: number; tileIndex: number } | null
+  >(null);
   const stepTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const toggleAspectRatio = (value: string) => {
+    setAspectRatios((prev) => {
+      const next = new Set(prev);
+      if (value === "auto") {
+        // Selecting "auto" replaces any other choices.
+        return new Set(["auto"]);
+      }
+      next.delete("auto"); // explicit ratio drops auto
+      if (next.has(value)) {
+        next.delete(value);
+        if (next.size === 0) next.add(value); // never empty — keep this one
+      } else {
+        next.add(value);
+      }
+      return next;
+    });
+  };
 
   const selectedProduct = products.find((p) => p.id === selectedProductId);
 
@@ -96,8 +153,14 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
         ? winnerRef?.imageUrl || null
         : autoRef?.imageUrl || null;
 
+  const allTilesDone =
+    state.phase === "generating" &&
+    state.formats.every((fg) => fg.results.every((r) => r.status !== "pending"));
   const canGenerate =
-    selectedProductId && activeReferenceUrl && (state.phase === "idle" || state.phase === "completed");
+    !!selectedProductId &&
+    !!activeReferenceUrl &&
+    aspectRatios.size > 0 &&
+    (state.phase === "idle" || state.phase === "error" || allTilesDone);
 
   useEffect(() => {
     return () => stepTimersRef.current.forEach(clearTimeout);
@@ -146,31 +209,58 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
     if (referenceMode === "winners" && !winnerRef) fetchRandomWinner();
   }, [referenceMode, autoRef, winnerRef, fetchRandomRef, fetchRandomWinner]);
 
-  // Poll for Kie generation completion
+  // Poll every pending refined tile across every format group, in parallel.
   useEffect(() => {
     if (state.phase !== "generating") return;
-    const { generationId } = state;
+    const pendingIds = state.formats.flatMap((fg) =>
+      fg.results.filter((r) => r.status === "pending").map((r) => r.id)
+    );
+    if (pendingIds.length === 0) return;
 
     const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/static-ads/generate/${generationId}`);
-        const data = await res.json();
+      const responses = await Promise.allSettled(
+        pendingIds.map(async (id) => {
+          const res = await fetch(`/api/static-ads/generate/${id}`);
+          const data = await res.json();
+          return { id, data };
+        })
+      );
 
+      let refreshGallery = false;
+
+      const applyUpdate = (entry: VariationResult): VariationResult => {
+        if (entry.status !== "pending") return entry;
+        const match = responses.find(
+          (r) => r.status === "fulfilled" && r.value.id === entry.id
+        );
+        if (!match || match.status !== "fulfilled") return entry;
+        const { data } = match.value;
         if (data.status === "completed" && data.imageUrl) {
-          setState({ phase: "completed", generationId, imageUrl: data.imageUrl });
-          onGalleryRefresh();
-          setTimeout(() => {
-            fetch(`/api/static-ads/generate/${generationId}`).catch(() => {});
-          }, 2000);
-        } else if (data.status === "error") {
-          setState({
-            phase: "error",
-            message: data.errorMessage || "Image generation failed",
-          });
+          refreshGallery = true;
+          return { ...entry, status: "completed" as const, imageUrl: data.imageUrl };
         }
-      } catch {
-        // Transient
-      }
+        if (data.status === "error") {
+          return {
+            ...entry,
+            status: "error" as const,
+            errorMessage: data.errorMessage || "Image generation failed",
+          };
+        }
+        // Carry the server's chain-state hint forward so the tile can pick
+        // the right "Generating variation…" vs "Refining…" copy.
+        return { ...entry, kieState: data.kieState };
+      };
+
+      setState((prev) => {
+        if (prev.phase !== "generating") return prev;
+        const nextFormats = prev.formats.map((fg) => ({
+          ...fg,
+          results: fg.results.map(applyUpdate),
+        }));
+        return { ...prev, formats: nextFormats };
+      });
+
+      if (refreshGallery) onGalleryRefresh();
     }, 3000);
 
     return () => clearInterval(interval);
@@ -178,16 +268,30 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
 
   const handleGenerate = useCallback(async () => {
     if (!selectedProductId || !activeReferenceUrl) return;
+    if (aspectRatios.size === 0) return;
 
-    setState({ phase: "pipeline", currentStep: 0 });
-    setSavedToWinners(false);
+    const requestedCount = Math.max(1, Math.min(5, variationCount));
+    const ratios = Array.from(aspectRatios);
+    setState({
+      phase: "pipeline",
+      currentStep: 0,
+      variationCount: requestedCount,
+      formatCount: ratios.length,
+    });
+    setSavedWinnerIds(new Set());
+    setSavingWinnerIds(new Set());
 
     stepTimersRef.current.forEach(clearTimeout);
     stepTimersRef.current = STEP_TIMINGS.slice(1).map((s) =>
       setTimeout(() => {
         setState((prev) =>
           prev.phase === "pipeline"
-            ? { phase: "pipeline", currentStep: STEP_TIMINGS.indexOf(s) }
+            ? {
+                phase: "pipeline",
+                currentStep: STEP_TIMINGS.indexOf(s),
+                variationCount: prev.variationCount,
+                formatCount: prev.formatCount,
+              }
             : prev
         );
       }, s.delay)
@@ -201,8 +305,10 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
           productId: selectedProductId,
           referenceImageUrl: activeReferenceUrl,
           adCopy: adCopy.trim() || undefined,
-          aspectRatio,
+          aspectRatios: ratios,
+          resolution,
           clientId,
+          variationCount: requestedCount,
         }),
       });
 
@@ -232,7 +338,25 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
         return;
       }
 
-      setState({ phase: "generating", generationId: data.generationId as string });
+      const formats = data.formats as
+        | { aspectRatio: string; batchId: string; items: { refinedId: string; sourceVariationId: string }[] }[]
+        | undefined;
+      if (!formats || formats.length === 0) {
+        setState({
+          phase: "error",
+          message: "Generation started but no format groups were returned",
+        });
+        return;
+      }
+
+      setState({
+        phase: "generating",
+        formats: formats.map((f) => ({
+          aspectRatio: f.aspectRatio,
+          batchId: f.batchId,
+          results: f.items.map((it) => ({ id: it.refinedId, status: "pending" as const })),
+        })),
+      });
     } catch (err) {
       stepTimersRef.current.forEach(clearTimeout);
       stepTimersRef.current = [];
@@ -241,7 +365,7 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
         message: err instanceof Error ? err.message : "Network error",
       });
     }
-  }, [selectedProductId, activeReferenceUrl, adCopy, aspectRatio]);
+  }, [selectedProductId, activeReferenceUrl, adCopy, aspectRatios, resolution, clientId, variationCount]);
 
   const resetState = () => {
     stepTimersRef.current.forEach(clearTimeout);
@@ -249,28 +373,37 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
     setState({ phase: "idle" });
   };
 
-  const regenerate = () => {
-    resetState();
-    // If auto mode, shuffle to a new reference
-    if (referenceMode === "auto") fetchRandomRef();
-    setTimeout(() => handleGenerate(), 100);
-  };
-
-  const handleSaveToWinners = useCallback(async () => {
-    if (state.phase !== "completed") return;
-    setSavingToWinners(true);
+  const handleSaveToWinners = useCallback(async (generationId: string) => {
+    if (savedWinnerIds.has(generationId) || savingWinnerIds.has(generationId)) return;
+    setSavingWinnerIds((prev) => new Set(prev).add(generationId));
     try {
       const res = await fetch("/api/winners/save-from-gallery", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ generationId: state.generationId }),
+        body: JSON.stringify({ generationId }),
       });
-      if (res.ok) setSavedToWinners(true);
+      if (res.ok) {
+        setSavedWinnerIds((prev) => new Set(prev).add(generationId));
+      }
     } catch { /* ignore */ }
-    finally { setSavingToWinners(false); }
-  }, [state]);
+    finally {
+      setSavingWinnerIds((prev) => {
+        const next = new Set(prev);
+        next.delete(generationId);
+        return next;
+      });
+    }
+  }, [savedWinnerIds, savingWinnerIds]);
 
-  const isProcessing = state.phase === "pipeline" || state.phase === "generating";
+  const handleDownload = useCallback((generationId: string, imageUrl: string) => {
+    const filename = `${selectedProduct?.name?.replace(/\s+/g, "-") || "ad"}-${generationId.slice(0, 8)}.png`;
+    const proxyUrl = `/api/static-ads/download?url=${encodeURIComponent(imageUrl)}&filename=${encodeURIComponent(filename)}`;
+    window.open(proxyUrl, "_blank");
+  }, [selectedProduct]);
+
+  const isProcessing =
+    state.phase === "pipeline" ||
+    (state.phase === "generating" && !allTilesDone);
 
   const currentSteps: Step[] =
     state.phase === "pipeline"
@@ -513,42 +646,119 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
               { value: "4:5", label: "4:5" },
               { value: "9:16", label: "9:16" },
               { value: "16:9", label: "16:9" },
-            ].map((fmt) => (
+            ].map((fmt) => {
+              const selected = aspectRatios.has(fmt.value);
+              return (
+                <button
+                  key={fmt.value}
+                  onClick={() => toggleAspectRatio(fmt.value)}
+                  disabled={isProcessing}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-lg border-2 px-3 py-2 text-xs font-medium transition-all",
+                    selected
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-border text-muted-foreground hover:border-primary/40",
+                    isProcessing && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  {fmt.value !== "auto" && (
+                    <div
+                      className={cn(
+                        "border border-current rounded-sm",
+                        fmt.value === "1:1" && "w-3.5 h-3.5",
+                        fmt.value === "4:5" && "w-3 h-[15px]",
+                        fmt.value === "9:16" && "w-2.5 h-[18px]",
+                        fmt.value === "16:9" && "w-[18px] h-2.5"
+                      )}
+                    />
+                  )}
+                  {fmt.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground/70">
+            Pick one or more formats — you&apos;ll get every variation rendered in each.
+          </p>
+        </section>
+
+        {/* 5. Quality */}
+        <section className="rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Gauge className="h-4 w-4 text-primary" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              5. Quality
+            </h3>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {([
+              { value: "1K" as const, label: "1K", subtitle: "Fast" },
+              { value: "2K" as const, label: "2K", subtitle: "Standard" },
+              { value: "4K" as const, label: "4K", subtitle: "Print" },
+            ]).map(({ value, label, subtitle }) => (
               <button
-                key={fmt.value}
-                onClick={() => setAspectRatio(fmt.value)}
+                key={value}
+                onClick={() => setResolution(value)}
                 disabled={isProcessing}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-lg border-2 px-3 py-2 text-xs font-medium transition-all",
-                  aspectRatio === fmt.value
+                  "flex-1 rounded-lg border-2 py-2 text-xs font-semibold transition-all",
+                  resolution === value
                     ? "border-primary bg-primary/5 text-primary"
                     : "border-border text-muted-foreground hover:border-primary/40",
                   isProcessing && "opacity-50 cursor-not-allowed"
                 )}
               >
-                {fmt.value !== "auto" && (
-                  <div
-                    className={cn(
-                      "border border-current rounded-sm",
-                      fmt.value === "1:1" && "w-3.5 h-3.5",
-                      fmt.value === "4:5" && "w-3 h-[15px]",
-                      fmt.value === "9:16" && "w-2.5 h-[18px]",
-                      fmt.value === "16:9" && "w-[18px] h-2.5"
-                    )}
-                  />
-                )}
-                {fmt.label}
+                <div>{label}</div>
+                <div className="text-[9px] font-normal opacity-70 normal-case tracking-normal">
+                  {subtitle}
+                </div>
               </button>
             ))}
           </div>
+          <p className="mt-2 text-[11px] text-muted-foreground/70">
+            Higher resolution = sharper output but costs more per generation.
+          </p>
         </section>
 
-        {/* 5. Summary + Generate */}
+        {/* 6. Variations */}
+        <section className="rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <CopyIcon className="h-4 w-4 text-primary" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              6. Variations
+            </h3>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                onClick={() => setVariationCount(n)}
+                disabled={isProcessing}
+                className={cn(
+                  "flex-1 rounded-lg border-2 py-2 text-xs font-semibold transition-all",
+                  variationCount === n
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-border text-muted-foreground hover:border-primary/40",
+                  isProcessing && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground/70">
+            {variationCount === 1
+              ? "One ad will be generated."
+              : `${variationCount} variations of the same concept will be generated in parallel.`}
+          </p>
+        </section>
+
+        {/* 7. Summary + Generate */}
         <section className="rounded-xl border border-border bg-card p-4">
           <div className="flex items-center gap-2 mb-3">
             <Zap className="h-4 w-4 text-primary" />
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              5. Generate
+              7. Generate
             </h3>
           </div>
 
@@ -578,7 +788,8 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
                     : uploadedRefUrl
                       ? "Custom reference uploaded"
                       : "No reference uploaded"}
-                {` · ${aspectRatio}`}
+                {` · ${Array.from(aspectRatios).join(" + ")} · ${resolution}`}
+                {variationCount > 1 ? ` · ${variationCount} variations` : ""}
                 {adCopy.trim() ? " · Custom copy" : " · AI-generated copy"}
               </p>
             </div>
@@ -590,7 +801,7 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
             className={cn(
               "flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition-all duration-200",
               canGenerate
-                ? "bg-primary text-primary-foreground hover:brightness-110 shadow-[0_0_20px_rgba(35,195,232,0.2)]"
+                ? "bg-primary text-primary-foreground hover:brightness-110 shadow-[0_0_20px_rgba(234,70,72,0.25)]"
                 : "bg-muted text-muted-foreground cursor-not-allowed"
             )}
           >
@@ -599,12 +810,36 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Processing...
               </>
-            ) : (
-              <>
-                <Sparkles className="h-4 w-4" />
-                Generate Ad
-              </>
-            )}
+            ) : (() => {
+              const fCount = aspectRatios.size;
+              const total = variationCount * fCount;
+              if (allTilesDone) {
+                return (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    Generate again
+                  </>
+                );
+              }
+              if (variationCount === 1 && fCount === 1) {
+                return (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    Generate Ad
+                  </>
+                );
+              }
+              const piece =
+                fCount > 1
+                  ? `${variationCount} variation${variationCount > 1 ? "s" : ""} × ${fCount} formats`
+                  : `${variationCount} variations`;
+              return (
+                <>
+                  <Sparkles className="h-4 w-4" />
+                  Generate {piece} ({total} ads)
+                </>
+              );
+            })()}
           </button>
 
           {state.phase === "error" && (
@@ -621,92 +856,81 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
         </section>
       </div>
 
-      {/* RIGHT: result preview / step progress */}
-      <div className="flex-1 min-w-0">
-        <div className="sticky top-6 rounded-xl border border-border bg-card overflow-hidden min-h-[400px] flex items-center justify-center">
-          {state.phase === "completed" && state.imageUrl ? (
-            <div className="relative w-full">
-              <img src={state.imageUrl} alt="Generated ad" className="w-full" />
-              <div className="absolute bottom-0 inset-x-0 p-4 bg-gradient-to-t from-black/60 to-transparent z-10">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-400" />
-                    <p className="text-xs text-white font-medium">
-                      {selectedProduct?.name}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleSaveToWinners}
-                      disabled={savingToWinners || savedToWinners}
-                      className={cn(
-                        "flex items-center gap-1.5 rounded-md backdrop-blur-sm px-3 py-1.5 text-xs font-medium transition-colors",
-                        savedToWinners
-                          ? "bg-primary/30 text-primary cursor-default"
-                          : "bg-white/20 text-white hover:bg-white/30"
-                      )}
-                    >
-                      {savingToWinners ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : savedToWinners ? (
-                        <CheckCircle2 className="h-3 w-3" />
-                      ) : (
-                        <Trophy className="h-3 w-3" />
-                      )}
-                      {savedToWinners ? "Winner!" : "Winner"}
-                    </button>
-                    {onEditAd && (
-                      <button
-                        onClick={() => onEditAd(state.generationId)}
-                        className="flex items-center gap-1.5 rounded-md bg-white/20 backdrop-blur-sm px-3 py-1.5 text-xs font-medium text-white hover:bg-white/30 transition-colors"
-                      >
-                        <Pencil className="h-3 w-3" />
-                        Edit Text
-                      </button>
+      {/* RIGHT: result preview / step progress / per-format final-ads grids */}
+      <div className="flex-1 min-w-0 flex flex-col gap-4">
+        {state.phase === "generating" ? (
+          state.formats.map((fg, fi) => {
+            const ready = fg.results.filter((r) => r.status === "completed").length;
+            return (
+              <div
+                key={fg.batchId}
+                className="rounded-xl border border-border bg-card overflow-hidden p-4"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {fg.aspectRatio === "auto" ? "Final ads" : `${fg.aspectRatio} finals`}
+                    <span className="ml-2 text-[11px] font-normal text-muted-foreground/70">
+                      product-consistent
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-muted-foreground/70">
+                    {ready}/{fg.results.length} ready
+                  </p>
+                </div>
+                <VariationsGrid
+                  results={fg.results}
+                  productName={selectedProduct?.name}
+                  savedWinnerIds={savedWinnerIds}
+                  savingWinnerIds={savingWinnerIds}
+                  onSaveWinner={handleSaveToWinners}
+                  onEdit={onEditAd}
+                  onDownload={handleDownload}
+                  onZoom={(tileIndex) => setLightboxIndex({ formatIndex: fi, tileIndex })}
+                />
+              </div>
+            );
+          })
+        ) : (
+          <div className="rounded-xl border border-border bg-card overflow-hidden min-h-[400px] flex items-center justify-center p-4">
+            {state.phase === "pipeline" ? (
+              <div className="flex flex-col items-center gap-6 p-10 w-full max-w-sm">
+                <div className="rounded-2xl border border-border bg-muted/20 p-6 w-full">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4">
+                    Pipeline Progress
+                    {(state.variationCount > 1 || state.formatCount > 1) && (
+                      <span className="ml-2 text-primary normal-case tracking-normal">
+                        · {state.variationCount} variation{state.variationCount > 1 ? "s" : ""}
+                        {state.formatCount > 1 ? ` × ${state.formatCount} formats` : ""}
+                      </span>
                     )}
-                    <button
-                      onClick={handleGenerate}
-                      className="rounded-md bg-white/20 backdrop-blur-sm px-3 py-1.5 text-xs font-medium text-white hover:bg-white/30 transition-colors"
-                    >
-                      Re-Generate
-                    </button>
-                  </div>
+                  </p>
+                  <StepProgress steps={currentSteps} />
+                </div>
+                <p className="text-[11px] text-muted-foreground/60 text-center">
+                  AI analysis and prompt generation — typically 30–50 seconds. Each
+                  final ad then runs through a product-consistency refinement step.
+                </p>
+              </div>
+            ) : state.phase === "error" && state.failedStep ? (
+              <div className="flex flex-col items-center gap-6 p-10 w-full max-w-sm">
+                <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 w-full">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-red-500 mb-4">
+                    Pipeline Error
+                  </p>
+                  <StepProgress steps={currentSteps} />
                 </div>
               </div>
-            </div>
-          ) : state.phase === "pipeline" || state.phase === "generating" ? (
-            <div className="flex flex-col items-center gap-6 p-10 w-full max-w-sm">
-              <div className="rounded-2xl border border-border bg-muted/20 p-6 w-full">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4">
-                  Pipeline Progress
+            ) : (
+              <div className="flex flex-col items-center gap-3 p-10 text-muted-foreground/40">
+                <ImageIcon className="h-12 w-12" />
+                <p className="text-sm">Your ad will appear here</p>
+                <p className="text-[11px] text-muted-foreground/30 text-center max-w-xs">
+                  Select a product, choose a reference, and click Generate
                 </p>
-                <StepProgress steps={currentSteps} />
               </div>
-              <p className="text-[11px] text-muted-foreground/60 text-center">
-                {state.phase === "pipeline"
-                  ? "AI analysis and prompt generation — typically 30–50 seconds"
-                  : "Image generation — typically 30–60 seconds"}
-              </p>
-            </div>
-          ) : state.phase === "error" && state.failedStep ? (
-            <div className="flex flex-col items-center gap-6 p-10 w-full max-w-sm">
-              <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 w-full">
-                <p className="text-xs font-semibold uppercase tracking-wider text-red-500 mb-4">
-                  Pipeline Error
-                </p>
-                <StepProgress steps={currentSteps} />
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-3 p-10 text-muted-foreground/40">
-              <ImageIcon className="h-12 w-12" />
-              <p className="text-sm">Your ad will appear here</p>
-              <p className="text-[11px] text-muted-foreground/30 text-center max-w-xs">
-                Select a product, choose a reference, and click Generate
-              </p>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Inspo Gallery Modal */}
@@ -738,6 +962,394 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
           setReferenceMode("winners");
         }}
       />
+
+      {/* Lightbox — click any tile to inspect at full size. Arrow keys cycle
+         within the same format group only (each group is a distinct artifact). */}
+      {state.phase === "generating" && lightboxIndex !== null && (() => {
+        const fg = state.formats[lightboxIndex.formatIndex];
+        if (!fg || fg.results.length === 0) return null;
+        const fi = lightboxIndex.formatIndex;
+        const total = fg.results.length;
+        return (
+          <VariationLightbox
+            results={fg.results}
+            index={lightboxIndex.tileIndex}
+            productName={selectedProduct?.name}
+            savedWinnerIds={savedWinnerIds}
+            savingWinnerIds={savingWinnerIds}
+            onClose={() => setLightboxIndex(null)}
+            onPrev={() =>
+              setLightboxIndex((prev) =>
+                prev === null
+                  ? null
+                  : { formatIndex: fi, tileIndex: (prev.tileIndex - 1 + total) % total }
+              )
+            }
+            onNext={() =>
+              setLightboxIndex((prev) =>
+                prev === null
+                  ? null
+                  : { formatIndex: fi, tileIndex: (prev.tileIndex + 1) % total }
+              )
+            }
+            onSaveWinner={handleSaveToWinners}
+            onEdit={onEditAd}
+            onDownload={handleDownload}
+          />
+        );
+      })()}
     </div>
+  );
+}
+
+type VariationsGridProps = {
+  results: VariationResult[];
+  productName?: string;
+  savedWinnerIds: Set<string>;
+  savingWinnerIds: Set<string>;
+  onSaveWinner: (generationId: string) => void;
+  onEdit?: (generationId: string) => void;
+  onDownload: (generationId: string, imageUrl: string) => void;
+  onZoom: (index: number) => void;
+};
+
+function VariationsGrid({
+  results,
+  productName,
+  savedWinnerIds,
+  savingWinnerIds,
+  onSaveWinner,
+  onEdit,
+  onDownload,
+  onZoom,
+}: VariationsGridProps) {
+  // 1 → single full tile; 2/3/4 → 2 columns; 5 → 3 columns
+  const gridCols =
+    results.length <= 1
+      ? "grid-cols-1"
+      : results.length <= 4
+        ? "grid-cols-2"
+        : "grid-cols-3";
+
+  return (
+    <div className="w-full">
+      <div className={cn("grid gap-3", gridCols)}>
+        {results.map((variation, i) => (
+          <VariationTile
+            key={variation.id}
+            variation={variation}
+            index={i}
+            total={results.length}
+            productName={productName}
+            isSaved={savedWinnerIds.has(variation.id)}
+            isSaving={savingWinnerIds.has(variation.id)}
+            onSaveWinner={() => onSaveWinner(variation.id)}
+            onEdit={onEdit ? () => onEdit(variation.id) : undefined}
+            onDownload={(url) => onDownload(variation.id, url)}
+            onZoom={() => onZoom(i)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+type VariationTileProps = {
+  variation: VariationResult;
+  index: number;
+  total: number;
+  productName?: string;
+  isSaved: boolean;
+  isSaving: boolean;
+  onSaveWinner: () => void;
+  onEdit?: () => void;
+  onDownload: (imageUrl: string) => void;
+  onZoom: () => void;
+};
+
+function VariationTile({
+  variation,
+  index,
+  total,
+  productName,
+  isSaved,
+  isSaving,
+  onSaveWinner,
+  onEdit,
+  onDownload,
+  onZoom,
+}: VariationTileProps) {
+  const showBadge = total > 1;
+  const stop = (handler: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    handler();
+  };
+
+  if (variation.status === "pending") {
+    // Pick the right copy based on which step of the chain we're in. The
+    // server returns kieState='waiting-source' while Nano Banana is still
+    // running; once GPT Image 2 has been fired the row's kieJobId is set
+    // and we get the regular kieState values.
+    const pendingLabel =
+      variation.kieState === "waiting-source"
+        ? "Generating variation…"
+        : "Refining for product consistency…";
+    return (
+      <div className="relative aspect-square overflow-hidden rounded-xl border border-border bg-muted/30">
+        <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted/40 via-muted/20 to-muted/40" />
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground/60 text-center px-3">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <p className="text-[11px]">{pendingLabel}</p>
+        </div>
+        {showBadge && (
+          <span className="absolute top-2 left-2 rounded-md bg-black/50 backdrop-blur-sm px-2 py-0.5 text-[10px] font-semibold text-white">
+            {index + 1}/{total}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  if (variation.status === "error") {
+    return (
+      <div className="relative aspect-square overflow-hidden rounded-xl border border-red-500/30 bg-red-500/5">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-red-500">
+          <AlertCircle className="h-6 w-6" />
+          <p className="text-[11px] text-center line-clamp-3">
+            {variation.errorMessage || "Failed"}
+          </p>
+        </div>
+        {showBadge && (
+          <span className="absolute top-2 left-2 rounded-md bg-red-500/80 backdrop-blur-sm px-2 py-0.5 text-[10px] font-semibold text-white">
+            {index + 1}/{total}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onZoom}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onZoom();
+        }
+      }}
+      className="group relative overflow-hidden rounded-xl border border-border bg-muted/10 cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+    >
+      {variation.imageUrl && (
+        <img
+          src={variation.imageUrl}
+          alt={productName ? `${productName} variation ${index + 1}` : `Variation ${index + 1}`}
+          className="w-full h-auto object-contain"
+        />
+      )}
+      {showBadge && (
+        <span className="absolute top-2 left-2 rounded-md bg-black/50 backdrop-blur-sm px-2 py-0.5 text-[10px] font-semibold text-white">
+          {index + 1}/{total}
+        </span>
+      )}
+      <span className="absolute top-2 right-2 flex items-center gap-1 rounded-md bg-black/50 backdrop-blur-sm px-2 py-0.5 text-[10px] font-medium text-white opacity-0 group-hover:opacity-100 transition-opacity">
+        <Maximize2 className="h-3 w-3" />
+        Zoom
+      </span>
+      <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center justify-end gap-1.5">
+          <button
+            onClick={stop(onSaveWinner)}
+            disabled={isSaving || isSaved}
+            title={isSaved ? "Saved as Winner" : "Save as Winner"}
+            className={cn(
+              "flex items-center gap-1 rounded-md backdrop-blur-sm px-2 py-1 text-[10px] font-medium transition-colors",
+              isSaved
+                ? "bg-primary/30 text-primary cursor-default"
+                : "bg-white/20 text-white hover:bg-white/30"
+            )}
+          >
+            {isSaving ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : isSaved ? (
+              <CheckCircle2 className="h-3 w-3" />
+            ) : (
+              <Trophy className="h-3 w-3" />
+            )}
+            {isSaved ? "Winner!" : "Winner"}
+          </button>
+          {onEdit && (
+            <button
+              onClick={stop(onEdit)}
+              title="Edit text"
+              className="flex items-center gap-1 rounded-md bg-white/20 backdrop-blur-sm px-2 py-1 text-[10px] font-medium text-white hover:bg-white/30 transition-colors"
+            >
+              <Pencil className="h-3 w-3" />
+              Edit
+            </button>
+          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (variation.imageUrl) onDownload(variation.imageUrl);
+            }}
+            title="Download"
+            className="flex items-center gap-1 rounded-md bg-white/20 backdrop-blur-sm px-2 py-1 text-[10px] font-medium text-white hover:bg-white/30 transition-colors"
+          >
+            <DownloadIcon className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type VariationLightboxProps = {
+  results: VariationResult[];
+  index: number;
+  productName?: string;
+  savedWinnerIds: Set<string>;
+  savingWinnerIds: Set<string>;
+  onClose: () => void;
+  onPrev: () => void;
+  onNext: () => void;
+  onSaveWinner: (generationId: string) => void;
+  onEdit?: (generationId: string) => void;
+  onDownload: (generationId: string, imageUrl: string) => void;
+};
+
+function VariationLightbox({
+  results,
+  index,
+  productName,
+  savedWinnerIds,
+  savingWinnerIds,
+  onClose,
+  onPrev,
+  onNext,
+  onSaveWinner,
+  onEdit,
+  onDownload,
+}: VariationLightboxProps) {
+  const variation = results[index];
+  const total = results.length;
+  const hasMultiple = total > 1;
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!hasMultiple) return;
+      if (e.key === "ArrowLeft") onPrev();
+      else if (e.key === "ArrowRight") onNext();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [hasMultiple, onPrev, onNext]);
+
+  if (!variation) return null;
+
+  const isSaved = savedWinnerIds.has(variation.id);
+  const isSaving = savingWinnerIds.has(variation.id);
+  const isCompleted = variation.status === "completed" && !!variation.imageUrl;
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-[92vw] max-h-[92vh] w-fit p-3 sm:p-4 gap-3 bg-background/95 backdrop-blur">
+        <DialogTitle className="sr-only">
+          {productName ? `${productName} — variation ${index + 1} of ${total}` : `Variation ${index + 1} of ${total}`}
+        </DialogTitle>
+        <DialogDescription className="sr-only">
+          Full-size preview of generated ad. Use arrow keys to navigate between variations.
+        </DialogDescription>
+
+        <div className="relative flex items-center justify-center">
+          {hasMultiple && (
+            <button
+              onClick={onPrev}
+              aria-label="Previous variation"
+              className="absolute left-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm hover:bg-black/70 transition-colors"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+          )}
+
+          {isCompleted ? (
+            <img
+              src={variation.imageUrl}
+              alt={productName ? `${productName} variation ${index + 1}` : `Variation ${index + 1}`}
+              className="max-h-[80vh] max-w-[88vw] w-auto h-auto object-contain rounded-lg"
+            />
+          ) : variation.status === "error" ? (
+            <div className="flex flex-col items-center justify-center gap-3 p-12 text-red-500">
+              <AlertCircle className="h-10 w-10" />
+              <p className="text-sm text-center max-w-md">
+                {variation.errorMessage || "This variation failed to generate."}
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-3 p-12 text-muted-foreground">
+              <Loader2 className="h-10 w-10 animate-spin" />
+              <p className="text-sm">Still generating…</p>
+            </div>
+          )}
+
+          {hasMultiple && (
+            <button
+              onClick={onNext}
+              aria-label="Next variation"
+              className="absolute right-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm hover:bg-black/70 transition-colors"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 px-1">
+          <p className="text-xs text-muted-foreground">
+            {productName ? `${productName} · ` : ""}
+            {hasMultiple ? `${index + 1} of ${total}` : "Variation"}
+          </p>
+          {isCompleted && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => onSaveWinner(variation.id)}
+                disabled={isSaving || isSaved}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                  isSaved
+                    ? "bg-primary/15 text-primary cursor-default"
+                    : "bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
+                )}
+              >
+                {isSaving ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : isSaved ? (
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                ) : (
+                  <Trophy className="h-3.5 w-3.5" />
+                )}
+                {isSaved ? "Winner!" : "Save as Winner"}
+              </button>
+              {onEdit && (
+                <button
+                  onClick={() => onEdit(variation.id)}
+                  className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit Text
+                </button>
+              )}
+              <button
+                onClick={() => variation.imageUrl && onDownload(variation.id, variation.imageUrl)}
+                className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:brightness-110 transition-all"
+              >
+                <DownloadIcon className="h-3.5 w-3.5" />
+                Download
+              </button>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

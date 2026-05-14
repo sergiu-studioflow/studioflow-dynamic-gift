@@ -21,7 +21,7 @@ export type KieJobParams = {
   prompt: string;
   imageUrls: string[]; // Public URLs (R2) — up to 14
   aspectRatio?: string; // "1:1" | "2:3" | "3:2" | "9:16" | "16:9" etc. Default: "1:1"
-  resolution?: string;  // "1K" | "2K" | "4K". Default: "1K"
+  resolution?: string;  // "1K" | "2K" | "4K". Default: "2K"
   outputFormat?: string; // "png" | "jpg". Default: "png"
 };
 
@@ -40,6 +40,7 @@ export type KiePollResult = {
 
 export async function submitKieJob(params: KieJobParams): Promise<KieSubmitResult> {
   const ratio = params.aspectRatio || "auto";
+  const apiKey = await getApiKey();
 
   const requestBody = {
     model: "nano-banana-2",
@@ -47,7 +48,7 @@ export async function submitKieJob(params: KieJobParams): Promise<KieSubmitResul
       prompt: params.prompt,
       image_input: params.imageUrls,
       aspect_ratio: ratio,
-      resolution: params.resolution || "1K",
+      resolution: params.resolution || "2K",
       output_format: params.outputFormat || "png",
     },
   };
@@ -56,7 +57,7 @@ export async function submitKieJob(params: KieJobParams): Promise<KieSubmitResul
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${await getApiKey()}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(requestBody),
   });
@@ -81,13 +82,103 @@ export async function submitKieJob(params: KieJobParams): Promise<KieSubmitResul
   return { taskId };
 }
 
+// -- GPT Image 2 (image-to-image, used for the product-consistency refinement step) --
+
+/** Fixed prompt for the refinement step — keep composition, swap the product. */
+export const REFINE_PROMPT = "Keep everything the same, swap the product to the product image attached";
+
+/** Aspect ratios GPT Image 2 supports directly (per Kie docs). */
+const GPT2_SUPPORTED_RATIOS = new Set(["1:1", "9:16", "16:9", "4:3", "3:4"]);
+
+/**
+ * Map our broader aspect-ratio set to GPT Image 2's supported subset.
+ * Unsupported ratios get a best-effort approximation, else "auto" (which
+ * preserves the input image's framing but caps resolution to 1K per Kie docs).
+ */
+export function mapAspectForGpt2(ratio: string | null | undefined): string {
+  if (!ratio) return "auto";
+  if (GPT2_SUPPORTED_RATIOS.has(ratio)) return ratio;
+  switch (ratio) {
+    case "4:5":
+    case "2:3":
+      return "3:4";
+    case "5:4":
+    case "3:2":
+      return "4:3";
+    case "21:9":
+      return "16:9";
+    case "1:4":
+      return "9:16";
+    default:
+      return "auto";
+  }
+}
+
+export type GptImage2Params = {
+  prompt: string;
+  inputUrls: string[]; // Public/presigned URLs. Up to 16.
+  aspectRatio?: string; // "auto" | "1:1" | "9:16" | "16:9" | "4:3" | "3:4". Default: "auto"
+  resolution?: string;  // "1K" | "2K" | "4K". Note: "auto" aspect caps to 1K, "1:1" caps to 2K.
+};
+
+/**
+ * Submit a GPT Image 2 image-to-image job. Shares the polling endpoint with
+ * nano-banana-2 (`recordInfo`), so `pollKieJob` works for results here too.
+ */
+export async function submitGptImage2Job(params: GptImage2Params): Promise<KieSubmitResult> {
+  const apiKey = await getApiKey();
+  const aspectRatio = params.aspectRatio || "auto";
+
+  // Per the Kie docs: "auto" aspect is limited to 1K; "1:1" cannot use 4K.
+  let resolution = params.resolution || (aspectRatio === "auto" ? "1K" : "2K");
+  if (aspectRatio === "auto" && resolution !== "1K") resolution = "1K";
+  if (aspectRatio === "1:1" && resolution === "4K") resolution = "2K";
+
+  const requestBody = {
+    model: "gpt-image-2-image-to-image",
+    input: {
+      prompt: params.prompt,
+      input_urls: params.inputUrls,
+      aspect_ratio: aspectRatio,
+      resolution,
+    },
+  };
+
+  const res = await fetch(`${KIE_API_BASE}/createTask`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Kie GPT Image 2 createTask failed (${res.status}): ${text}`);
+  }
+
+  const json = await res.json();
+  if (json.code !== 200 && json.code !== 0) {
+    throw new Error(`Kie GPT Image 2 createTask error: ${json.msg || JSON.stringify(json)}`);
+  }
+
+  const taskId = json.data?.taskId ?? json.taskId;
+  if (!taskId) {
+    throw new Error(`Kie GPT Image 2 createTask: no taskId in response: ${JSON.stringify(json)}`);
+  }
+
+  return { taskId };
+}
+
 // -- Poll --
 
 export async function pollKieJob(taskId: string): Promise<KiePollResult> {
+  const apiKey = await getApiKey();
   const res = await fetch(`${KIE_API_BASE}/recordInfo?taskId=${encodeURIComponent(taskId)}`, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${await getApiKey()}`,
+      Authorization: `Bearer ${apiKey}`,
     },
   });
 

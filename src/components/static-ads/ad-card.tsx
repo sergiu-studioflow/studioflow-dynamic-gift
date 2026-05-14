@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ImageIcon, Loader2, AlertCircle, Download, Trash2, Trophy, CheckCircle2 } from "lucide-react";
+import { ImageIcon, Loader2, AlertCircle, Download, Trash2, Trophy, CheckCircle2, Layers, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "@/components/shared/status-badge";
 
@@ -15,6 +15,11 @@ export type StaticAdGeneration = {
   aspectRatio: string;
   errorMessage: string | null;
   createdAt: string;
+  mode?: string | null;
+  batchId?: string | null;
+  batchSize?: number | null;
+  batchIndex?: number | null;
+  sourceGenerationId?: string | null;
 };
 
 type AdCardProps = {
@@ -27,7 +32,16 @@ type AdCardProps = {
 export function AdCard({ generation, onClick, onDownload, onDelete }: AdCardProps) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [imageBroken, setImageBroken] = useState(false);
   const imgUrl = generation.thumbnailUrl || generation.imageUrl;
+  const isBatch = !!generation.batchId && (generation.batchSize ?? 1) > 1;
+  const batchSize = generation.batchSize ?? 1;
+  const isRefined = generation.mode === "refined";
+
+  // Hide cards whose preview URL is unreachable (legacy cross-client R2 paths,
+  // expired tempfiles, etc). The server-side filter catches most; this is the
+  // belt-and-suspenders for ones that slip through.
+  if (imageBroken) return null;
 
   const handleSaveToWinners = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -44,9 +58,23 @@ export function AdCard({ generation, onClick, onDownload, onDelete }: AdCardProp
   };
 
   return (
-    <div
-      className="group relative flex flex-col overflow-hidden rounded-xl border border-border bg-card transition-all duration-200 hover:border-primary/40 hover:shadow-md text-left"
-    >
+    <div className={cn("relative", isBatch && "pt-2 pr-2")}>
+      {/* Stacked card shadows behind the main card to suggest a batch */}
+      {isBatch && (
+        <>
+          <div
+            aria-hidden
+            className="absolute inset-0 translate-x-1.5 -translate-y-1.5 rounded-xl border border-border bg-card/60"
+          />
+          <div
+            aria-hidden
+            className="absolute inset-0 translate-x-3 -translate-y-3 rounded-xl border border-border bg-card/30"
+          />
+        </>
+      )}
+      <div
+        className="group relative flex flex-col overflow-hidden rounded-xl border border-border bg-card transition-all duration-200 hover:border-primary/40 hover:shadow-md text-left"
+      >
       {/* Image area — clickable for detail view */}
       <button onClick={onClick} className="relative aspect-square w-full overflow-hidden bg-muted">
         {generation.status === "completed" && imgUrl ? (
@@ -54,6 +82,7 @@ export function AdCard({ generation, onClick, onDownload, onDelete }: AdCardProp
             src={imgUrl}
             alt={`${generation.styleName} - ${generation.productName}`}
             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            onError={() => setImageBroken(true)}
           />
         ) : generation.status === "generating" ? (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2">
@@ -75,6 +104,23 @@ export function AdCard({ generation, onClick, onDownload, onDelete }: AdCardProp
         <div className="absolute top-2 right-2">
           <StatusBadge status={generation.status} />
         </div>
+
+        {/* Batch chip — shows aspect-ratio when all siblings share one (the
+            new auto-refinement flow always does), else falls back to a count. */}
+        {isBatch && (
+          <div className="absolute top-2 left-2 flex items-center gap-1 rounded-md bg-black/55 backdrop-blur-sm px-2 py-0.5 text-[10px] font-semibold text-white">
+            <Layers className="h-3 w-3" />
+            {batchSize} {generation.aspectRatio && generation.aspectRatio !== "auto" ? `in ${generation.aspectRatio}` : "variations"}
+          </div>
+        )}
+
+        {/* Refined chip — product-consistent final ad (GPT Image 2 image-to-image). */}
+        {isRefined && !isBatch && (
+          <div className="absolute top-2 left-2 flex items-center gap-1 rounded-md bg-primary/85 backdrop-blur-sm px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">
+            <Wand2 className="h-3 w-3" />
+            Refined
+          </div>
+        )}
       </button>
 
       {/* Info + actions */}
@@ -132,6 +178,7 @@ export function AdCard({ generation, onClick, onDownload, onDelete }: AdCardProp
             </button>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
         styleName: "Edit",
         finalPrompt: prompt,
         aspectRatio: original.aspectRatio,
-        resolution: "1K",
+        resolution: "2K",
         outputFormat: "PNG",
         status: "pending",
         mode: "edit",

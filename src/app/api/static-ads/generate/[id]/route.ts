@@ -321,17 +321,12 @@ async function fireGpt2ForRefined(
     return updated;
   }
 
-  let varUrl: string;
-  let prodUrl: string;
-  try {
-    [varUrl, prodUrl] = await Promise.all([
-      toAccessibleUrl(intermediate.imageUrl),
-      toAccessibleUrl(product.imageUrl),
-    ]);
-  } catch (err) {
-    console.error("[static-ads/chain] toAccessibleUrl failed:", err);
-    return { ...refined, kieState: "waiting-source" };
-  }
+  // Pass the public R2 URLs directly to GPT Image 2 — DO NOT presign.
+  // Presigned URLs expire after 10 min; if Kie's queue takes longer than that
+  // to download, the input image fetch 403s and the job fails. The public
+  // r2.dev URL doesn't expire.
+  const varUrl = intermediate.imageUrl;
+  const prodUrl = product.imageUrl;
 
   let kieResult: Awaited<ReturnType<typeof submitGptImage2Job>>;
   try {

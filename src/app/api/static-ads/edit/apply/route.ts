@@ -5,7 +5,6 @@ import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { generateEditCommand, buildEditPrompt } from "@/lib/static-ads/edit-pipeline";
 import { submitKieJob } from "@/lib/static-ads/kie-ai";
-import { toAccessibleUrl } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -79,13 +78,12 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
-    // Get presigned URL for the original image (Kie needs to access it)
-    const accessibleImageUrl = await toAccessibleUrl(original.imageUrl);
-
-    // Submit to Kie AI with the original image + edit prompt
+    // Pass the raw public R2 URL to Kie — NOT a presigned URL. Presigned
+    // URLs expire after 10 min; if Kie's queue takes longer, the input fetch
+    // 403s. The public r2.dev URL doesn't expire.
     const kieResult = await submitKieJob({
       prompt,
-      imageUrls: [accessibleImageUrl],
+      imageUrls: [original.imageUrl],
       aspectRatio: original.aspectRatio || "1:1",
     });
 

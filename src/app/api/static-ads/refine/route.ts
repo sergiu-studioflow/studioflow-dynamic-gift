@@ -4,7 +4,6 @@ import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { submitGptImage2Job, REFINE_PROMPT, mapAspectForGpt2 } from "@/lib/static-ads/kie-ai";
-import { toAccessibleUrl } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -121,16 +120,14 @@ export async function POST(req: NextRequest) {
     .returning();
 
   // Fire one GPT Image 2 submission per source variation, in parallel.
+  // Pass raw public R2 URLs (not presigned) — see /generate/[id]/route.ts
+  // for the rationale (presigned URLs expire before Kie's queue picks up).
   const kieResults = await Promise.allSettled(
-    sources.map(async (source) => {
+    sources.map((source) => {
       const product = productById.get(source.productId!)!;
-      const [variationUrl, productUrl] = await Promise.all([
-        toAccessibleUrl(source.imageUrl!),
-        toAccessibleUrl(product.imageUrl!),
-      ]);
       return submitGptImage2Job({
         prompt: REFINE_PROMPT,
-        inputUrls: [variationUrl, productUrl],
+        inputUrls: [source.imageUrl!, product.imageUrl!],
         aspectRatio: mapAspectForGpt2(source.aspectRatio),
         resolution: source.resolution || "2K",
       });

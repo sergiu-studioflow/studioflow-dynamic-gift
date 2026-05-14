@@ -6,7 +6,6 @@ import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { analyzeReferenceAd, generateCustomPrompt } from "@/lib/static-ads/custom-pipeline";
 import { submitKieJob, REFINE_PROMPT } from "@/lib/static-ads/kie-ai";
-import { toAccessibleUrl } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -138,15 +137,18 @@ export async function POST(req: NextRequest) {
   // Nano Banana submission. DG-specific: also include the brand logos (color
   // + white wordmark) from clientStaticAdConfig so Nano Banana can reproduce
   // them faithfully in the generated ad.
-  let accessibleRefUrl: string;
-  let accessibleProductUrl: string;
+  //
+  // NOTE: we deliberately pass the RAW public R2 URLs to Kie, not presigned
+  // URLs. `toAccessibleUrl()` returns 10-min-expiring presigned URLs; when
+  // Kie's processing queue takes longer than 10 minutes to pick up the job
+  // (observed during DG's first v2 generation), the URL expires before Kie's
+  // worker fetches the image, producing a 403 that Kie surfaces as a Python
+  // `requests.HTTPError` in failMsg. The public r2.dev URL doesn't expire and
+  // works fine for Kie / Anthropic / browser consumers alike.
+  const accessibleRefUrl = referenceImageUrl;
+  const accessibleProductUrl = product.imageUrl!;
   const brandLogoUrls: string[] = [];
   try {
-    [accessibleRefUrl, accessibleProductUrl] = await Promise.all([
-      toAccessibleUrl(referenceImageUrl),
-      toAccessibleUrl(product.imageUrl!),
-    ]);
-
     const [brandConfig] = await db
       .select({
         brandLogoUrl: schema.clientStaticAdConfig.brandLogoUrl,
@@ -156,10 +158,10 @@ export async function POST(req: NextRequest) {
       .where(eq(schema.clientStaticAdConfig.clientId, clientId))
       .limit(1);
     if (brandConfig?.brandLogoUrl) {
-      brandLogoUrls.push(await toAccessibleUrl(brandConfig.brandLogoUrl));
+      brandLogoUrls.push(brandConfig.brandLogoUrl);
     }
     if (brandConfig?.brandLogoWhiteUrl) {
-      brandLogoUrls.push(await toAccessibleUrl(brandConfig.brandLogoWhiteUrl));
+      brandLogoUrls.push(brandConfig.brandLogoWhiteUrl);
     }
   } catch (err) {
     return NextResponse.json(

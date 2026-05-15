@@ -328,32 +328,11 @@ async function fireGpt2ForRefined(
   const varUrl = intermediate.imageUrl;
   const prodUrl = product.imageUrl;
 
-  // DG-specific: also fetch the client's brand logo (color wordmark). When
-  // present, we add it as a third input + extend the prompt so GPT Image 2
-  // swaps the brand logo in the variation to the exact wordmark. Without
-  // this, Nano Banana's interpretation of the logo (font/proportions) leaks
-  // through the refinement step. We use the color logo by default since
-  // most DG ad layouts read on light backgrounds.
-  let logoUrl: string | null = null;
-  if (intermediate.clientId) {
-    const [brandConfig] = await db
-      .select({ brandLogoUrl: schema.clientStaticAdConfig.brandLogoUrl })
-      .from(schema.clientStaticAdConfig)
-      .where(eq(schema.clientStaticAdConfig.clientId, intermediate.clientId))
-      .limit(1);
-    logoUrl = brandConfig?.brandLogoUrl || null;
-  }
-
-  const inputUrls = logoUrl ? [varUrl, prodUrl, logoUrl] : [varUrl, prodUrl];
-  const prompt = logoUrl
-    ? "Keep everything the same, but swap the product to the product image attached and swap the brand logo to the logo image attached."
-    : REFINE_PROMPT;
-
   let kieResult: Awaited<ReturnType<typeof submitGptImage2Job>>;
   try {
     kieResult = await submitGptImage2Job({
-      prompt,
-      inputUrls,
+      prompt: REFINE_PROMPT,
+      inputUrls: [varUrl, prodUrl],
       aspectRatio: mapAspectForGpt2(intermediate.aspectRatio),
       resolution: intermediate.resolution || "2K",
     });

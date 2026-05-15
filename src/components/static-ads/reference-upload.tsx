@@ -9,6 +9,7 @@ type ReferenceUploadProps = {
   onRemove: () => void;
   uploadedUrl: string | null;
   disabled?: boolean;
+  clientSlug?: string;
 };
 
 export function ReferenceUpload({
@@ -16,6 +17,7 @@ export function ReferenceUpload({
   onRemove,
   uploadedUrl,
   disabled,
+  clientSlug,
 }: ReferenceUploadProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -54,6 +56,7 @@ export function ReferenceUpload({
         formData.append("file", file);
         // brandSlug resolved server-side via BRAND_SLUG env var
         formData.append("assetType", "static-ad-system/reference-ads");
+        if (clientSlug) formData.append("clientSlug", clientSlug);
 
         const res = await fetch("/api/upload", { method: "POST", body: formData });
         const data = await res.json();
@@ -72,7 +75,7 @@ export function ReferenceUpload({
         setIsUploading(false);
       }
     },
-    [onUploadComplete]
+    [onUploadComplete, clientSlug]
   );
 
   const handleRemove = useCallback(() => {

@@ -10,6 +10,11 @@ import { submitKieJob, REFINE_PROMPT } from "@/lib/static-ads/kie-ai";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+/** Prompt for the DG-specific logo-swap chain step (GPT2 image-to-image). */
+const LOGO_REFINE_PROMPT = "Keep everything the same, swap the logo to the logo image attached";
+
+type GenerationRow = typeof schema.staticAdGenerations.$inferSelect;
+
 /**
  * POST /api/static-ads/generate/custom
  *
@@ -148,6 +153,11 @@ export async function POST(req: NextRequest) {
   const accessibleRefUrl = referenceImageUrl;
   const accessibleProductUrl = product.imageUrl!;
   const brandLogoUrls: string[] = [];
+  // primaryLogoUrl drives the per-row decision to insert a `logo-refined`
+  // chain step (GPT2 logo swap). If a client has no logo configured we
+  // skip that step and fall back to the original 2-stage chain
+  // (intermediate → refined). The color wordmark is preferred.
+  let primaryLogoUrl: string | null = null;
   try {
     const [brandConfig] = await db
       .select({
@@ -159,9 +169,11 @@ export async function POST(req: NextRequest) {
       .limit(1);
     if (brandConfig?.brandLogoUrl) {
       brandLogoUrls.push(brandConfig.brandLogoUrl);
+      primaryLogoUrl = brandConfig.brandLogoUrl;
     }
     if (brandConfig?.brandLogoWhiteUrl) {
       brandLogoUrls.push(brandConfig.brandLogoWhiteUrl);
+      if (!primaryLogoUrl) primaryLogoUrl = brandConfig.brandLogoWhiteUrl;
     }
   } catch (err) {
     return NextResponse.json(
@@ -262,16 +274,57 @@ export async function POST(req: NextRequest) {
         )
         .returning();
 
-      // Insert N matching refined rows. Each refined row's referenceImageUrl
-      // is the source variation's R2 URL — but we don't have that yet (it's
-      // populated when the intermediate completes). For now seed it with the
-      // top-level referenceImageUrl as a placeholder; /generate/[id] will
-      // overwrite it once the intermediate persists.
+      // When the client has a brand logo configured, insert a logo-refined
+      // chain step BETWEEN the Nano Banana variation and the GPT2 product
+      // swap. Order of stages:
+      //   intermediate (Nano Banana)
+      //     → logo-refined (GPT2 logo swap)  [only when primaryLogoUrl exists]
+      //     → refined (GPT2 product swap)
+      // Each refined row points at its immediate predecessor via
+      // source_generation_id so the chain orchestrator in /generate/[id]
+      // walks the path correctly.
+      let logoRefineds: GenerationRow[] = [];
+      if (primaryLogoUrl) {
+        logoRefineds = await db
+          .insert(schema.staticAdGenerations)
+          .values(
+            intermediates.map((intermediate, i) => {
+              const inheritsError = intermediate.status === "error";
+              return {
+                userId: portalUser.id,
+                clientId,
+                productId: product.id,
+                productName: product.productName,
+                styleName: "LogoRefined",
+                finalPrompt: LOGO_REFINE_PROMPT,
+                aspectRatio: formatRatio,
+                resolution: resolvedResolution,
+                outputFormat: "PNG",
+                status: inheritsError ? "error" : "pending",
+                errorMessage: inheritsError ? intermediate.errorMessage : null,
+                mode: "logo-refined",
+                referenceImageUrl, // placeholder; overwritten once intermediate persists
+                adCopy: adCopy?.trim() || null,
+                analysisJson: null,
+                sourceGenerationId: intermediate.id,
+                batchId,
+                batchSize: variationCount,
+                batchIndex: i + 1,
+              };
+            })
+          )
+          .returning();
+      }
+
+      // Refined rows always exist (the user-visible final ad). Their source
+      // is the logo-refined row when present, otherwise the intermediate
+      // directly (legacy 2-stage chain for clients without logos).
       const refineds = await db
         .insert(schema.staticAdGenerations)
         .values(
           intermediates.map((intermediate, i) => {
-            const inheritsError = intermediate.status === "error";
+            const upstream = logoRefineds[i] ?? intermediate;
+            const inheritsError = upstream.status === "error";
             return {
               userId: portalUser.id,
               clientId,
@@ -283,12 +336,12 @@ export async function POST(req: NextRequest) {
               resolution: resolvedResolution,
               outputFormat: "PNG",
               status: inheritsError ? "error" : "pending",
-              errorMessage: inheritsError ? intermediate.errorMessage : null,
+              errorMessage: inheritsError ? upstream.errorMessage : null,
               mode: "refined",
-              referenceImageUrl, // placeholder; overwritten once intermediate persists
+              referenceImageUrl, // placeholder; overwritten once upstream persists
               adCopy: adCopy?.trim() || null,
               analysisJson: null,
-              sourceGenerationId: intermediate.id,
+              sourceGenerationId: upstream.id,
               batchId,
               batchSize: variationCount,
               batchIndex: i + 1,
@@ -319,14 +372,15 @@ export async function POST(req: NextRequest) {
       );
 
       // Update intermediates with kieJobId or error. If an intermediate ends
-      // up errored, propagate that to its paired refined row too so the
-      // chain can't strand.
+      // up errored, propagate that to its paired logo-refined (if any) and
+      // refined rows too so the chain can't strand.
       await Promise.all(
         kieResults.map(async (result, i) => {
           const intermediate = intermediates[i];
+          const logoRefined = logoRefineds[i]; // may be undefined for non-logo clients
           const refined = refineds[i];
           if (intermediate.status === "error") {
-            // Already inserted as errored — refined already mirrors it.
+            // Already inserted as errored — downstream rows already mirror it.
             return;
           }
           if (result.status === "fulfilled") {
@@ -342,7 +396,7 @@ export async function POST(req: NextRequest) {
           }
           const message =
             result.reason instanceof Error ? result.reason.message : "Kie AI submission failed";
-          await Promise.all([
+          const errorUpdates = [
             db
               .update(schema.staticAdGenerations)
               .set({ status: "error", errorMessage: message, updatedAt: new Date() })
@@ -351,7 +405,16 @@ export async function POST(req: NextRequest) {
               .update(schema.staticAdGenerations)
               .set({ status: "error", errorMessage: message, updatedAt: new Date() })
               .where(eq(schema.staticAdGenerations.id, refined.id)),
-          ]);
+          ];
+          if (logoRefined) {
+            errorUpdates.push(
+              db
+                .update(schema.staticAdGenerations)
+                .set({ status: "error", errorMessage: message, updatedAt: new Date() })
+                .where(eq(schema.staticAdGenerations.id, logoRefined.id))
+            );
+          }
+          await Promise.all(errorUpdates);
         })
       );
 

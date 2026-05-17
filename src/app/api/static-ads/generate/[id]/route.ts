@@ -85,11 +85,11 @@ export async function GET(
     // the frontend can stay simple and just keep polling one id per tile.
     if (
       generation.status === "pending" &&
-      generation.mode === "refined" &&
+      (generation.mode === "refined" || generation.mode === "logo-refined") &&
       generation.sourceGenerationId &&
       !generation.kieJobId
     ) {
-      const chained = await advanceRefinedChain(generation);
+      const chained = await advanceChainStep(generation);
       return NextResponse.json(await withPresignedUrls(chained));
     }
 
@@ -166,106 +166,231 @@ export async function GET(
 
 type GenerationRow = typeof schema.staticAdGenerations.$inferSelect;
 
+const LOGO_REFINE_PROMPT = "Keep everything the same, swap the logo to the logo image attached";
+
 /**
  * Chain orchestrator for the auto-refinement pipeline.
  *
- * Called when /generate/[id] is polled for a refined row that's still waiting
- * for its source intermediate (status='pending', kie_job_id=NULL). Polls the
- * intermediate's Nano Banana job; if complete, eager-persists the intermediate
- * to R2, then fires GPT Image 2 inline and updates the refined row. If the
- * intermediate is still in flight, returns the refined row with a
- * `kieState: 'waiting-source'` hint so the frontend can show the right copy.
+ * Handles two chain step types in one place because the source-waiting logic
+ * is identical — only the "fire next Kie job" call differs:
  *
- * Race-protected: the GPT2 submission is guarded by `UPDATE ... WHERE
- * kie_job_id IS NULL RETURNING` so concurrent polls can't double-fire.
+ *   mode='logo-refined' → fires `fireLogoSwap`  (GPT2 logo swap)
+ *                         source = intermediate (Nano Banana variation)
+ *   mode='refined'      → fires `fireGpt2ForRefined` (GPT2 product swap)
+ *                         source = logo-refined when present, else intermediate
+ *
+ * Called when /generate/[id] is polled for either row with `kie_job_id=NULL`.
+ * Polls the source's Kie job; on success, eager-persists the source to R2,
+ * updates the source row, then fires the next step. Returns the row with a
+ * `kieState: 'waiting-source'` hint while the source is still in flight.
+ *
+ * Race-protected: each fire function guards its UPDATE with
+ * `WHERE kie_job_id IS NULL RETURNING` so concurrent polls can't double-fire.
  */
-async function advanceRefinedChain(refined: GenerationRow): Promise<GenerationRow & { kieState?: string }> {
-  const sourceId = refined.sourceGenerationId!;
-  const [intermediate] = await db
+async function advanceChainStep(row: GenerationRow): Promise<GenerationRow & { kieState?: string }> {
+  const sourceId = row.sourceGenerationId!;
+  const [source] = await db
     .select()
     .from(schema.staticAdGenerations)
     .where(eq(schema.staticAdGenerations.id, sourceId))
     .limit(1);
 
-  if (!intermediate) {
+  if (!source) {
     const [updated] = await db
       .update(schema.staticAdGenerations)
-      .set({ status: "error", errorMessage: "Source variation missing", updatedAt: new Date() })
-      .where(eq(schema.staticAdGenerations.id, refined.id))
+      .set({ status: "error", errorMessage: "Source row missing", updatedAt: new Date() })
+      .where(eq(schema.staticAdGenerations.id, row.id))
       .returning();
     return updated;
   }
 
-  if (intermediate.status === "error") {
+  if (source.status === "error") {
     const [updated] = await db
       .update(schema.staticAdGenerations)
       .set({
         status: "error",
-        errorMessage: intermediate.errorMessage || "Source variation failed",
+        errorMessage: source.errorMessage || "Source step failed",
         updatedAt: new Date(),
       })
-      .where(eq(schema.staticAdGenerations.id, refined.id))
+      .where(eq(schema.staticAdGenerations.id, row.id))
       .returning();
     return updated;
   }
 
-  // Edge: intermediate already completed (cold start / earlier poll). Skip the
-  // Kie roundtrip and just fire GPT2.
-  if (intermediate.status === "completed" && intermediate.imageUrl) {
-    return await fireGpt2ForRefined(refined, intermediate);
+  // Edge: source already completed (cold start / earlier poll). Skip the
+  // Kie roundtrip and fire the next step immediately.
+  if (source.status === "completed" && source.imageUrl) {
+    return await fireNextStep(row, source);
   }
 
-  // Otherwise intermediate.status === "generating" (or "pending" awaiting its
-  // own Nano Banana submission — rare race; treat as still-waiting).
-  if (!intermediate.kieJobId) {
-    return { ...refined, kieState: "waiting-source" };
+  // Otherwise source.status === "generating" (or "pending" awaiting its
+  // own Kie submission — rare race; treat as still-waiting).
+  if (!source.kieJobId) {
+    return { ...row, kieState: "waiting-source" };
   }
 
   let pollResult: Awaited<ReturnType<typeof pollKieJob>>;
   try {
-    pollResult = await pollKieJob(intermediate.kieJobId);
+    pollResult = await pollKieJob(source.kieJobId);
   } catch (err) {
-    console.error("[static-ads/chain] poll intermediate error:", err);
-    return { ...refined, kieState: "waiting-source" };
+    console.error("[static-ads/chain] poll source error:", err);
+    return { ...row, kieState: "waiting-source" };
   }
 
   if (pollResult.state === "failed") {
-    const msg = pollResult.errorMessage || "Source variation generation failed";
+    const msg = pollResult.errorMessage || "Source step failed";
     await db
       .update(schema.staticAdGenerations)
       .set({ status: "error", errorMessage: msg, updatedAt: new Date() })
-      .where(eq(schema.staticAdGenerations.id, intermediate.id));
+      .where(eq(schema.staticAdGenerations.id, source.id));
     const [updated] = await db
       .update(schema.staticAdGenerations)
       .set({ status: "error", errorMessage: msg, updatedAt: new Date() })
-      .where(eq(schema.staticAdGenerations.id, refined.id))
+      .where(eq(schema.staticAdGenerations.id, row.id))
       .returning();
     return updated;
   }
 
   if (pollResult.state !== "success" || pollResult.resultUrls.length === 0) {
     // Still queued / processing.
-    return { ...refined, kieState: "waiting-source" };
+    return { ...row, kieState: "waiting-source" };
   }
 
-  // Intermediate is done. Eager-persist it to R2 (same pattern as the existing
-  // success branch above), update the intermediate row, then fire GPT2.
+  // Source is done. Eager-persist it to R2 (same pattern as the standalone
+  // success branch above), update the source row, then fire the next step.
   const sourceUrl = pollResult.resultUrls[0];
-  let intermediateR2Url = sourceUrl;
+  let sourceR2Url = sourceUrl;
   try {
-    intermediateR2Url = await downloadAndUploadToR2(sourceUrl, intermediate.id, intermediate.clientId);
+    sourceR2Url = await downloadAndUploadToR2(sourceUrl, source.id, source.clientId);
   } catch (uploadErr) {
-    console.error(`[static-ads/r2] Eager persist of intermediate ${intermediate.id} failed:`, uploadErr);
-    // Fall back to tempfile URL; GPT2 can still ingest it, and the standalone
-    // polling branch above will retry the R2 upload on next intermediate poll.
+    console.error(`[static-ads/r2] Eager persist of source ${source.id} failed:`, uploadErr);
+    // Fall back to tempfile URL; the standalone polling branch will retry.
   }
-  const [persistedIntermediate] = await db
+  const [persistedSource] = await db
     .update(schema.staticAdGenerations)
-    .set({ status: "completed", imageUrl: intermediateR2Url, updatedAt: new Date() })
-    .where(eq(schema.staticAdGenerations.id, intermediate.id))
+    .set({ status: "completed", imageUrl: sourceR2Url, updatedAt: new Date() })
+    .where(eq(schema.staticAdGenerations.id, source.id))
     .returning();
 
-  return await fireGpt2ForRefined(refined, persistedIntermediate);
+  return await fireNextStep(row, persistedSource);
+}
+
+/** Dispatch the right "next-step" Kie submission based on row mode. */
+async function fireNextStep(
+  row: GenerationRow,
+  source: GenerationRow
+): Promise<GenerationRow & { kieState?: string }> {
+  if (row.mode === "logo-refined") return fireLogoSwap(row, source);
+  return fireGpt2ForRefined(row, source);
+}
+
+/**
+ * Fire the GPT Image 2 logo-swap job. The source is the Nano Banana
+ * intermediate, and we look up the client's color wordmark from
+ * clientStaticAdConfig. If the logo has disappeared between row insertion
+ * and now, propagate that as an error so the chain doesn't strand.
+ * Race-guarded via UPDATE ... WHERE kie_job_id IS NULL.
+ */
+async function fireLogoSwap(
+  logoRefined: GenerationRow,
+  intermediate: GenerationRow
+): Promise<GenerationRow & { kieState?: string }> {
+  if (!intermediate.imageUrl) {
+    const [updated] = await db
+      .update(schema.staticAdGenerations)
+      .set({
+        status: "error",
+        errorMessage: "Source variation has no image",
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.staticAdGenerations.id, logoRefined.id))
+      .returning();
+    return updated;
+  }
+
+  if (!intermediate.clientId) {
+    const [updated] = await db
+      .update(schema.staticAdGenerations)
+      .set({
+        status: "error",
+        errorMessage: "Source variation has no client attached",
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.staticAdGenerations.id, logoRefined.id))
+      .returning();
+    return updated;
+  }
+
+  const [brandConfig] = await db
+    .select({
+      brandLogoUrl: schema.clientStaticAdConfig.brandLogoUrl,
+      brandLogoWhiteUrl: schema.clientStaticAdConfig.brandLogoWhiteUrl,
+    })
+    .from(schema.clientStaticAdConfig)
+    .where(eq(schema.clientStaticAdConfig.clientId, intermediate.clientId))
+    .limit(1);
+  const logoUrl = brandConfig?.brandLogoUrl || brandConfig?.brandLogoWhiteUrl || null;
+
+  if (!logoUrl) {
+    const [updated] = await db
+      .update(schema.staticAdGenerations)
+      .set({
+        status: "error",
+        errorMessage: "Brand logo missing — was the clientStaticAdConfig row deleted?",
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.staticAdGenerations.id, logoRefined.id))
+      .returning();
+    return updated;
+  }
+
+  // Raw public R2 URLs — see fireGpt2ForRefined for the rationale (presigned
+  // URLs expire before Kie's queue picks the job up).
+  let kieResult: Awaited<ReturnType<typeof submitGptImage2Job>>;
+  try {
+    kieResult = await submitGptImage2Job({
+      prompt: LOGO_REFINE_PROMPT,
+      inputUrls: [intermediate.imageUrl, logoUrl],
+      aspectRatio: mapAspectForGpt2(intermediate.aspectRatio),
+      resolution: intermediate.resolution || "2K",
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "GPT Image 2 logo-swap submission failed";
+    const [updated] = await db
+      .update(schema.staticAdGenerations)
+      .set({ status: "error", errorMessage: message, updatedAt: new Date() })
+      .where(eq(schema.staticAdGenerations.id, logoRefined.id))
+      .returning();
+    return updated;
+  }
+
+  // Race guard: only the first concurrent poller's UPDATE returns a row.
+  const updated = await db
+    .update(schema.staticAdGenerations)
+    .set({
+      kieJobId: kieResult.taskId,
+      status: "generating",
+      referenceImageUrl: intermediate.imageUrl,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.staticAdGenerations.id, logoRefined.id),
+        isNull(schema.staticAdGenerations.kieJobId)
+      )
+    )
+    .returning();
+
+  if (updated.length > 0) {
+    return updated[0];
+  }
+
+  const [latest] = await db
+    .select()
+    .from(schema.staticAdGenerations)
+    .where(eq(schema.staticAdGenerations.id, logoRefined.id))
+    .limit(1);
+  return latest ?? logoRefined;
 }
 
 /**

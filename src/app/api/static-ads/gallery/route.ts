@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
-import { desc, eq, and, ne, isNotNull, sql } from "drizzle-orm";
+import { desc, eq, and, notInArray, isNotNull, sql } from "drizzle-orm";
 import { toAccessibleUrl } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
@@ -24,9 +24,14 @@ export async function GET(req: NextRequest) {
     if (clientId) {
       conditions.push(eq(schema.staticAdGenerations.clientId, clientId));
     }
-    // Always hide intermediate (Nano Banana pre-refinement) rows. They're
-    // server-only chain artifacts — the user only sees the refined finals.
-    conditions.push(ne(schema.staticAdGenerations.mode, "intermediate"));
+    // Always hide intermediate chain artifacts. `intermediate` is the
+    // Nano Banana variation; `logo-refined` is the GPT2 logo-swap step
+    // (DG-specific, only present when the client has a brand logo
+    // configured). Both are server-only — the user only sees the final
+    // `refined` row at the end of the chain.
+    conditions.push(
+      notInArray(schema.staticAdGenerations.mode, ["intermediate", "logo-refined"])
+    );
     if (status && status !== "all") {
       // Explicit filter (Completed / Generating / Error) — show whatever was asked for.
       conditions.push(eq(schema.staticAdGenerations.status, status));

@@ -223,10 +223,47 @@ async function advanceChainStep(row: GenerationRow): Promise<GenerationRow & { k
     return await fireNextStep(row, source);
   }
 
-  // Otherwise source.status === "generating" (or "pending" awaiting its
-  // own Kie submission — rare race; treat as still-waiting).
+  // Source has no Kie job of its own yet. Two sub-cases:
+  //   a) source is itself a chain-waiter (mode='logo-refined' or 'refined'
+  //      with sourceGenerationId set) — recursively advance IT first, then
+  //      re-check. This is required for the DG 3-stage chain
+  //      (intermediate → logo-refined → refined): the frontend only polls
+  //      the refined id, so without recursion the logo-refined step never
+  //      gets advanced and the chain stalls.
+  //   b) genuine race (status='pending', no parent) — wait.
   if (!source.kieJobId) {
-    return { ...row, kieState: "waiting-source" };
+    if (
+      source.status === "pending" &&
+      source.sourceGenerationId &&
+      (source.mode === "logo-refined" || source.mode === "refined")
+    ) {
+      const advancedSource = await advanceChainStep(source);
+      // If recursion produced a kieJobId, refetch and fall through so we
+      // can poll it. Otherwise the parent is still waiting on its source.
+      if (advancedSource.kieJobId) {
+        const [refreshed] = await db
+          .select()
+          .from(schema.staticAdGenerations)
+          .where(eq(schema.staticAdGenerations.id, source.id))
+          .limit(1);
+        if (refreshed?.kieJobId) {
+          source.kieJobId = refreshed.kieJobId;
+          source.status = refreshed.status;
+          source.imageUrl = refreshed.imageUrl;
+        } else {
+          return { ...row, kieState: "waiting-source" };
+        }
+      } else {
+        return { ...row, kieState: "waiting-source" };
+      }
+    } else {
+      return { ...row, kieState: "waiting-source" };
+    }
+  }
+
+  // After recursion, source may already be completed — fire next step immediately.
+  if (source.status === "completed" && source.imageUrl) {
+    return await fireNextStep(row, source);
   }
 
   let pollResult: Awaited<ReturnType<typeof pollKieJob>>;

@@ -4,8 +4,10 @@ import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { desc, eq, and, notInArray, isNotNull, sql } from "drizzle-orm";
 import { toAccessibleUrl } from "@/lib/r2";
+import { sweepGeneratingRows } from "@/lib/static-ads/poll-and-persist";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 type Row = typeof schema.staticAdGenerations.$inferSelect;
 
@@ -19,6 +21,15 @@ export async function GET(req: NextRequest) {
     const groupByBatch = req.nextUrl.searchParams.get("groupByBatch") === "true";
     const limit = Math.min(parseInt(req.nextUrl.searchParams.get("limit") || "100"), 200);
     const offset = parseInt(req.nextUrl.searchParams.get("offset") || "0");
+
+    // Resolve any rows stuck on 'generating' because the user closed the
+    // generator tab while Kie was still processing. Frontend per-tile
+    // polling lives only in unified-generator; without this sweep, stuck
+    // rows sit forever (observed 28h on DNA portal). Sweep advances
+    // intermediates / logo-refined with their own kieJobId; refined rows
+    // waiting on a source (kieJobId=NULL) are still progressed by
+    // GET /generate/[id].
+    await sweepGeneratingRows({ clientId });
 
     const conditions = [];
     if (clientId) {

@@ -38,16 +38,21 @@ export function WinnersLibraryManager() {
   useEffect(() => { fetchWinners(); }, [fetchWinners]);
 
   const handleUpload = useCallback(async (file: File) => {
+    if (!clientId) {
+      alert("Select a client before uploading a winner.");
+      return;
+    }
     setUploading(true);
     try {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("name", file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "));
+      formData.append("clientId", clientId);
       const res = await fetch("/api/winners", { method: "POST", body: formData });
       if (res.ok) await fetchWinners();
     } catch { /* ignore */ }
     finally { setUploading(false); }
-  }, [fetchWinners]);
+  }, [fetchWinners, clientId]);
 
   const handleDelete = useCallback(async (id: string) => {
     setDeletingId(id);

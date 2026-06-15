@@ -3,12 +3,12 @@
 import { useState } from "react";
 import Image from "next/image";
 import { authClient } from "@/lib/auth-client";
-import { Loader2, ArrowRight, Mail } from "lucide-react";
+import { Loader2, ArrowRight } from "lucide-react";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleLogin(e: React.FormEvent) {
@@ -16,17 +16,17 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const { error } = await authClient.signIn.magicLink({
+    const { error } = await authClient.signIn.email({
       email,
+      password,
       callbackURL: "/dashboard",
     });
 
     if (error) {
-      setError(error.message ?? "Failed to send magic link. Please try again.");
+      setError(error.message ?? "Incorrect email or password. Please try again.");
       setLoading(false);
     } else {
-      setSent(true);
-      setLoading(false);
+      window.location.href = "/dashboard";
     }
   }
 
@@ -58,57 +58,60 @@ export default function LoginPage() {
             <span className="font-display font-extrabold text-primary">Creative Studio</span>
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Sign in with your Dynamic Gift work email.
+            Sign in with your email and password.
           </p>
         </div>
 
-        {sent ? (
-          <div className="animate-fade-in rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-center dark:border-emerald-800 dark:bg-emerald-950">
-            <Mail className="mx-auto h-5 w-5 text-emerald-600 dark:text-emerald-400" />
-            <p className="mt-3 text-sm font-medium text-emerald-800 dark:text-emerald-200">
-              Check your email
-            </p>
-            <p className="mt-1 text-[13px] text-emerald-600 dark:text-emerald-400">
-              We sent a magic link to <strong>{email}</strong>
-            </p>
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+            <label htmlFor="email" className="block text-[13px] font-medium text-foreground">
+              Email address
+            </label>
+            <input
+              id="email"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@company.com"
+              required
+              className="mt-1.5 block w-full rounded-lg border border-input bg-card px-3.5 py-2.5 text-sm text-foreground shadow-xs placeholder:text-muted-foreground transition-all duration-150 focus:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/10"
+            />
           </div>
-        ) : (
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label htmlFor="email" className="block text-[13px] font-medium text-foreground">
-                Email address
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com"
-                required
-                className="mt-1.5 block w-full rounded-lg border border-input bg-card px-3.5 py-2.5 text-sm text-foreground shadow-xs placeholder:text-muted-foreground transition-all duration-150 focus:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/10"
-              />
-            </div>
 
-            {error && (
-              <p className="text-[13px] text-destructive">{error}</p>
+          <div>
+            <label htmlFor="password" className="block text-[13px] font-medium text-foreground">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              required
+              className="mt-1.5 block w-full rounded-lg border border-input bg-card px-3.5 py-2.5 text-sm text-foreground shadow-xs placeholder:text-muted-foreground transition-all duration-150 focus:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/10"
+            />
+          </div>
+
+          {error && <p className="text-[13px] text-destructive">{error}</p>}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-xs transition-all duration-150 hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <>
+                Sign in
+                <ArrowRight className="h-3.5 w-3.5" />
+              </>
             )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-xs transition-all duration-150 hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <>
-                  Send magic link
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </>
-              )}
-            </button>
-          </form>
-        )}
+          </button>
+        </form>
       </div>
     </div>
   );

@@ -327,7 +327,7 @@ export const adStylePrompts = pgTable("ad_style_prompts", {
 
 export const staticAdGenerations = pgTable("static_ad_generations", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").references(() => users.id),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
   clientId: uuid("client_id").references(() => brands.id, { onDelete: "set null" }),
   adStyleId: uuid("ad_style_id").references(() => adStyles.id),
   productId: uuid("product_id").references(() => clientProducts.id, { onDelete: "set null" }),
@@ -379,7 +379,7 @@ export const referenceAdLibrary = pgTable("reference_ad_library", {
 
 export const winnersLibrary = pgTable("winners_library", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").references(() => users.id),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
   clientId: uuid("client_id").references(() => brands.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   imageUrl: text("image_url").notNull(),
@@ -440,7 +440,7 @@ export const scenes = pgTable("scenes", {
 export const videoGenerations = pgTable("video_generations", {
   id: uuid("id").primaryKey().defaultRandom(),
   clientId: uuid("client_id").references(() => brands.id, { onDelete: "set null" }),
-  userId: uuid("user_id").references(() => users.id),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
   productId: uuid("product_id").references(() => clientProducts.id, { onDelete: "set null" }),
   productName: text("product_name"),
   videoType: text("video_type").notNull().default("ugc"),
@@ -574,7 +574,7 @@ export const organicPosts = pgTable("organic_posts", {
 export const researchBriefs = pgTable("research_briefs", {
   id: uuid("id").primaryKey().defaultRandom(),
   clientId: uuid("client_id").references(() => brands.id, { onDelete: "set null" }),
-  userId: uuid("user_id").references(() => users.id),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
   sourceType: text("source_type").notNull(),
   sourceId: integer("source_id").notNull(),
   sourceSnapshot: jsonb("source_snapshot"),
@@ -612,7 +612,7 @@ export const researchBriefs = pgTable("research_briefs", {
 
 export const activityLog = pgTable("activity_log", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").references(() => users.id),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
   clientId: uuid("client_id"),
   action: text("action").notNull(),
   resourceType: text("resource_type").notNull(),

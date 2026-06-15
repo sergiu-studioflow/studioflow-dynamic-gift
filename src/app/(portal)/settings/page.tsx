@@ -2,9 +2,11 @@ import { auth } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
-import { Settings, User, Shield , Key } from "lucide-react";
+import { Settings, User, Shield , Key, Users } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 import { ApiKeysManager } from "@/components/settings/api-keys-manager";
+import { ChangePasswordForm } from "@/components/settings/change-password-form";
+import { UserManagement } from "@/components/admin/user-management";
 
 export const dynamic = "force-dynamic";
 
@@ -113,16 +115,24 @@ export default async function SettingsPage() {
         <div className="flex items-center gap-3 border-b border-border px-5 py-4">
           <Shield className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold text-foreground">Security</h2>
+          <span className="ml-auto text-xs text-muted-foreground">Change your password</span>
         </div>
         <div className="p-5">
-          <p className="text-sm text-muted-foreground">
-            Authentication is managed via magic link. No password is required.
-          </p>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Auth provider: <span className="font-medium text-foreground">Better Auth (magic link via Resend)</span>
-          </p>
+          <ChangePasswordForm />
         </div>
       </div>
+
+      {/* User Management (admins only) */}
+      {userData?.portalUser?.role === "admin" && userData.authUser?.id && (
+        <div>
+          <div className="mb-3 flex items-center gap-2">
+            <Users className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold text-foreground">User management</h2>
+            <span className="text-xs text-muted-foreground">Create accounts, set roles, reset passwords</span>
+          </div>
+          <UserManagement currentUserId={userData.authUser.id} />
+        </div>
+      )}
 
       {/* Notification Preferences Placeholder */}
       <div className="rounded-xl border border-border bg-card shadow-card">

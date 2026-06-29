@@ -132,6 +132,10 @@ export const brands = pgTable("brands", {
   storagePrefix: text("storage_prefix").notNull().default(""),
   settings: jsonb("settings").notNull().default({}),
   notes: text("notes"),
+  // Review Scraping System — per-brand Google review source + toggle
+  googleMapsUrl: text("google_maps_url"),
+  googlePlaceId: text("google_place_id"),
+  reviewsEnabled: boolean("reviews_enabled").notNull().default(false),
   provisionedAt: timestamp("provisioned_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -700,4 +704,99 @@ export const clientResearchSources = pgTable("client_research_sources", {
   lastScrapedAt: timestamp("last_scraped_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// =============================================
+// REVIEW SCRAPING SYSTEM
+// =============================================
+
+// Raw reviews scraped from each brand's Google Maps profile (Apify).
+// Pre-existing table (created by the original n8n build) — already populated.
+// Deduped by reviewId (the Google review id). `qualifiesForRender` is a
+// generated STORED column: >=4 stars AND >=1 customer photo AND substantive
+// text — the "identify reviews with customer photos" filter.
+// `archivedImageUrls` is added by migration 0009 (R2 copies of the photos).
+export const reviews = pgTable("reviews", {
+  reviewId: text("review_id").primaryKey(),
+  brandId: uuid("brand_id").references(() => brands.id, { onDelete: "cascade" }),
+  reviewerId: text("reviewer_id"),
+  reviewerName: text("reviewer_name"),
+  reviewerUrl: text("reviewer_url"),
+  reviewerPhotoUrl: text("reviewer_photo_url"),
+  text: text("text"),
+  textTranslated: text("text_translated"),
+  stars: integer("stars"),
+  language: text("language"),
+  originalLanguage: text("original_language"),
+  reviewImageUrls: jsonb("review_image_urls").notNull().default([]),   // customer photos (Google CDN)
+  hasPhotos: boolean("has_photos"),
+  archivedImageUrls: jsonb("archived_image_urls").default([]),          // R2 copies (migration 0009)
+  reviewUrl: text("review_url"),
+  reviewOrigin: text("review_origin"),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  publishAtText: text("publish_at_text"),
+  likesCount: integer("likes_count").default(0),
+  responseFromOwnerText: text("response_from_owner_text"),
+  responseFromOwnerDate: timestamp("response_from_owner_date", { withTimezone: true }),
+  placeId: text("place_id"),
+  scrapedAt: timestamp("scraped_at", { withTimezone: true }).defaultNow(),
+  qualifiesForRender: boolean("qualifies_for_render"),
+  rendered: boolean("rendered").notNull().default(false),
+  renderedAt: timestamp("rendered_at", { withTimezone: true }),
+  rawData: jsonb("raw_data"),
+});
+
+// One generated testimonial creative set per qualifying review. Holds the
+// AI captions + approval state; the per-format images live in
+// review_graphic_assets. The approval gate operates on this parent row.
+export const reviewGraphics = pgTable("review_graphics", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  reviewId: text("review_id").references(() => reviews.reviewId, { onDelete: "cascade" }),
+  clientId: uuid("client_id").references(() => brands.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  // Denormalized review context (for gallery display without a join)
+  reviewerName: text("reviewer_name"),
+  reviewText: text("review_text"),
+  stars: integer("stars"),
+  // AI-generated copy (Claude)
+  pullQuote: text("pull_quote"),
+  instagramCaption: text("instagram_caption"),
+  storiesCaption: text("stories_caption"),
+  facebookCaption: text("facebook_caption"),
+  cta: text("cta"),
+  hashtags: jsonb("hashtags"),
+  status: text("status").notNull().default("generating"), // generating | draft | approved | rejected | error
+  errorMessage: text("error_message"),
+  approvedBy: uuid("approved_by").references(() => users.id, { onDelete: "set null" }),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// One image per platform format (ig_feed | story | fb) for a review_graphics row.
+export const reviewGraphicAssets = pgTable("review_graphic_assets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  graphicId: uuid("graphic_id").notNull().references(() => reviewGraphics.id, { onDelete: "cascade" }),
+  format: text("format").notNull(), // ig_feed | story | fb
+  aspectRatio: text("aspect_ratio").notNull(),
+  kieJobId: text("kie_job_id"),
+  imageUrl: text("image_url"),
+  status: text("status").notNull().default("generating"), // generating | completed | error
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Tracks each Apify scrape run (per brand) so the ingest sweep can poll it.
+export const reviewScrapeRuns = pgTable("review_scrape_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  clientId: uuid("client_id").references(() => brands.id, { onDelete: "cascade" }),
+  apifyRunId: text("apify_run_id"),
+  apifyDatasetId: text("apify_dataset_id"),
+  status: text("status").notNull().default("scraping"), // scraping | complete | error
+  reviewsFound: integer("reviews_found").notNull().default(0),
+  reviewsNew: integer("reviews_new").notNull().default(0),
+  errorMessage: text("error_message"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
 });

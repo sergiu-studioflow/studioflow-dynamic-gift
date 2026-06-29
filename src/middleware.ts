@@ -5,6 +5,10 @@ export function middleware(request: NextRequest) {
     request.nextUrl.pathname.startsWith("/login") ||
     request.nextUrl.pathname.startsWith("/api/auth") ||
     request.nextUrl.pathname.startsWith("/api/webhook") ||
+    // Cron routes authenticate via CRON_SECRET bearer (or session) in-route.
+    // They must be allowlisted here so the scheduler's cookie-less request
+    // isn't bounced to /login (which would silently kill the crons).
+    request.nextUrl.pathname.startsWith("/api/cron") ||
     request.nextUrl.pathname.startsWith("/api/research-briefs/callback");
 
   // Check for Better Auth session cookie (edge-compatible — no DB call)

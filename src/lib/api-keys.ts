@@ -91,4 +91,9 @@ export const CONFIGURABLE_KEYS = [
     label: "Anthropic Claude",
     description: "Powers Video Generation pipeline (Steps 1, 4, 5) and Static Ad creative analysis",
   },
+  {
+    keyName: "APIFY_TOKEN",
+    label: "Apify",
+    description: "Powers the Review Scraping System (Google Maps reviews scraper)",
+  },
 ];

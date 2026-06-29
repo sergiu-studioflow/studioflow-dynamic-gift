@@ -18,13 +18,14 @@ import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ClientSwitcher } from "@/components/layout/client-switcher";
-import { Users, Clapperboard, Target, FileText } from "lucide-react";
+import { Users, Clapperboard, Target, FileText, Quote } from "lucide-react";
 import { useClient } from "@/lib/client-context";
 
 // Clients that have systems enabled
 const STATIC_AD_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
 const VIDEO_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
 const RESEARCH_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
+const REVIEW_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
 
 const baseNavigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -55,6 +56,7 @@ export function PortalSidebar({ brandName, features, userEmail }: PortalSidebarP
       { name: "Competitor Research", href: "/competitor-ads", icon: Target },
       { name: "Creative Briefs", href: "/research-briefs", icon: FileText },
     ] : []),
+    ...(REVIEW_CLIENTS.includes(clientSlug) ? [{ name: "Review Graphics", href: "/review-graphics", icon: Quote }] : []),
   ];
 
   async function handleSignOut() {

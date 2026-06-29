@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Loader2, Star, Quote, Sparkles, ImageIcon, Check, MessageSquare } from "lucide-react";
+import { Loader2, Star, Quote, Sparkles, ImageIcon, Check, MessageSquare, X, ChevronLeft, ChevronRight, Expand } from "lucide-react";
 import { useClient } from "@/lib/client-context";
 import { cn } from "@/lib/utils";
 
@@ -19,12 +19,13 @@ type Review = {
   rendered: boolean;
 };
 
-/** Thumbnail that falls back to a placeholder if the image URL is dead (stale Google CDN urls 403 until archived to R2). */
+/** Cropped thumbnail (fills a fixed-size box). Falls back to a placeholder if
+ * the image URL is dead (stale Google CDN urls 403 until archived to R2). */
 function ReviewThumb({ url, photoCount, archived }: { url: string | null; photoCount: number; archived: boolean }) {
   const [broken, setBroken] = useState(false);
   if (!url || broken) {
     return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-muted-foreground/25">
+      <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground/25">
         <ImageIcon className="h-8 w-8" />
         {photoCount > 0 && !archived && (
           <span className="text-[9px] text-muted-foreground/40">photo archives on next refresh</span>
@@ -34,6 +35,49 @@ function ReviewThumb({ url, photoCount, archived }: { url: string | null; photoC
   }
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={url} alt="review photo" className="h-full w-full object-cover" onError={() => setBroken(true)} />;
+}
+
+/** Full-screen image viewer: click outside / X to close; arrows for multi-photo reviews. */
+function Lightbox({ images, onClose }: { images: string[]; onClose: () => void }) {
+  const [i, setI] = useState(0);
+  const prev = () => setI((n) => (n - 1 + images.length) % images.length);
+  const next = () => setI((n) => (n + 1) % images.length);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+      onClick={onClose}
+    >
+      <button onClick={onClose} className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20">
+        <X className="h-5 w-5" />
+      </button>
+      {images.length > 1 && (
+        <>
+          <button
+            onClick={(e) => { e.stopPropagation(); prev(); }}
+            className="absolute left-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+          >
+            <ChevronLeft className="h-6 w-6" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); next(); }}
+            className="absolute right-4 top-1/2 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+          >
+            <ChevronRight className="h-6 w-6" />
+          </button>
+          <span className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-white">
+            {i + 1} / {images.length}
+          </span>
+        </>
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={images[i]}
+        alt="review photo"
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[88vh] max-w-[88vw] rounded-lg object-contain shadow-2xl"
+      />
+    </div>
+  );
 }
 
 const FILTERS = [
@@ -48,6 +92,7 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<string[] | null>(null);
 
   const load = useCallback(async () => {
     if (!clientId) return;
@@ -124,12 +169,23 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {reviews.map((r) => (
-            <div key={r.reviewId} className="flex flex-col rounded-xl border border-border bg-card overflow-hidden">
-              {/* Photo */}
-              <div className="relative aspect-[4/3] bg-muted">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-fr">
+          {reviews.map((r) => {
+            const hasImg = r.images.length > 0;
+            return (
+            <div key={r.reviewId} className="flex h-full flex-col rounded-xl border border-border bg-card overflow-hidden">
+              {/* Photo — fixed height, cropped; click to expand */}
+              <button
+                type="button"
+                onClick={() => hasImg && setLightbox(r.images)}
+                className={cn("group relative h-44 w-full shrink-0 bg-muted", hasImg ? "cursor-zoom-in" : "cursor-default")}
+              >
                 <ReviewThumb url={r.images[0] || null} photoCount={r.photoCount} archived={r.archived} />
+                {hasImg && (
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover:bg-black/30 group-hover:opacity-100">
+                    <Expand className="h-5 w-5 text-white" />
+                  </span>
+                )}
                 {r.photoCount > 1 && (
                   <span className="absolute bottom-1.5 right-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
                     +{r.photoCount - 1}
@@ -140,37 +196,40 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
                     <Check className="h-3 w-3" /> Generated
                   </span>
                 )}
-              </div>
+              </button>
 
               {/* Body */}
               <div className="flex flex-1 flex-col gap-2 p-3">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold text-foreground truncate">{r.reviewerName || "Anonymous"}</span>
                   {r.stars != null && (
-                    <span className="flex items-center gap-0.5">
+                    <span className="flex items-center gap-0.5 shrink-0">
                       {Array.from({ length: r.stars }).map((_, i) => (
                         <Star key={i} className="h-3 w-3 fill-amber-400 text-amber-400" />
                       ))}
                     </span>
                   )}
                 </div>
-                <p className="flex-1 text-[12px] text-muted-foreground line-clamp-4">
+                <p className="text-[12px] text-muted-foreground line-clamp-3">
                   <Quote className="mr-1 inline h-3 w-3 text-muted-foreground/40" />
                   {r.text || r.textTranslated || "(no text)"}
                 </p>
                 <button
                   onClick={() => generate(r.reviewId)}
                   disabled={busyId === r.reviewId}
-                  className="mt-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50"
+                  className="mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50"
                 >
                   {busyId === r.reviewId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                   {r.rendered ? "Generate again" : "Generate graphic"}
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
+
+      {lightbox && <Lightbox images={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   );
 }

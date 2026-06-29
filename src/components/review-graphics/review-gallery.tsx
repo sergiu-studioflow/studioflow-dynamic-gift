@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  Quote, Loader2, Check, X, Pencil, Download, Star, ImageIcon, AlertCircle, Save,
+  Quote, Loader2, Check, X, Pencil, Download, Star, ImageIcon, AlertCircle, Save, Expand,
 } from "lucide-react";
 import { useClient } from "@/lib/client-context";
 import { cn } from "@/lib/utils";
+import { Lightbox } from "@/components/review-graphics/lightbox";
 
 type Asset = {
   id: string;
@@ -145,6 +146,10 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
     cta: graphic.cta || "",
     hashtags: (graphic.hashtags || []).join(", "),
   });
+  const [lightbox, setLightbox] = useState<{ images: string[]; start: number } | null>(null);
+
+  // Completed graphic images (for the click-to-expand lightbox, in format order)
+  const completedImages = graphic.assets.filter((a) => a.status === "completed" && a.imageUrl).map((a) => a.imageUrl as string);
 
   async function act(body: object) {
     setBusy(true);
@@ -198,8 +203,17 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
                     <span className="text-[9px]">failed</span>
                   </div>
                 ) : a.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={a.imageUrl} alt={a.format} className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setLightbox({ images: completedImages, start: Math.max(0, completedImages.indexOf(a.imageUrl as string)) })}
+                    className="group absolute inset-0 cursor-zoom-in"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={a.imageUrl} alt={a.format} className="h-full w-full object-cover" />
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover:bg-black/30 group-hover:opacity-100">
+                      <Expand className="h-5 w-5 text-white" />
+                    </span>
+                  </button>
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center text-muted-foreground/30">
                     <ImageIcon className="h-6 w-6" />
@@ -282,6 +296,7 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
           </div>
         </div>
       </div>
+      {lightbox && <Lightbox images={lightbox.images} start={lightbox.start} onClose={() => setLightbox(null)} />}
     </div>
   );
 }

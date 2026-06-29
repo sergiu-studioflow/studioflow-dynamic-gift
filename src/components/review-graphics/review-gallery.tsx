@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Quote, Loader2, Check, X, Pencil, Download, Star, ImageIcon, AlertCircle, Save, Expand,
+  Copy, Instagram, Facebook, RectangleVertical, Megaphone,
 } from "lucide-react";
 import { useClient } from "@/lib/client-context";
 import { cn } from "@/lib/utils";
@@ -39,7 +40,11 @@ const STATUS_TABS = [
   { key: "all", label: "All" },
 ];
 
-const FORMAT_LABELS: Record<string, string> = { ig_feed: "IG Feed", story: "Story", fb: "Facebook" };
+const FORMAT_META: Record<string, { label: string; icon: typeof Instagram; aspect: string }> = {
+  ig_feed: { label: "IG Feed", icon: Instagram, aspect: "aspect-[4/5]" },
+  story: { label: "Story", icon: RectangleVertical, aspect: "aspect-[9/16]" },
+  fb: { label: "Facebook", icon: Facebook, aspect: "aspect-square" },
+};
 
 function downloadAsset(asset: Asset, graphic: Graphic) {
   if (!asset.imageUrl) return;
@@ -101,31 +106,40 @@ export function ReviewGallery({ refreshTrigger }: { refreshTrigger: number }) {
   }
 
   return (
-    <div className="space-y-5">
-      {/* Status filter */}
-      <div className="flex items-center gap-2">
-        {STATUS_TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setStatus(t.key)}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-xs font-medium transition-all",
-              status === t.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
+    <div className="space-y-6">
+      {/* Status filter — segmented control */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card/60 p-1">
+          {STATUS_TABS.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setStatus(t.key)}
+              className={cn(
+                "rounded-full px-3.5 py-1.5 text-xs font-medium transition-all",
+                status === t.key
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {graphics.length > 0 && (
+          <span className="text-xs text-muted-foreground">
+            {graphics.length} {status === "all" ? "" : status} set{graphics.length === 1 ? "" : "s"}
+          </span>
+        )}
       </div>
 
       {graphics.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground/40">
-          <Quote className="h-12 w-12 mb-3" />
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-20 text-muted-foreground/40">
+          <Quote className="mb-3 h-12 w-12" />
           <p className="text-sm">No {status === "all" ? "" : status} review graphics yet</p>
-          <p className="text-[11px] text-muted-foreground/30">Generate some from the Generate tab</p>
+          <p className="text-[11px] text-muted-foreground/30">Generate some from the Reviews or Generate tab</p>
         </div>
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-6">
           {graphics.map((g) => (
             <GraphicCard key={g.id} graphic={g} onChanged={load} />
           ))}
@@ -148,8 +162,10 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
   });
   const [lightbox, setLightbox] = useState<{ images: string[]; start: number } | null>(null);
 
-  // Completed graphic images (for the click-to-expand lightbox, in format order)
-  const completedImages = graphic.assets.filter((a) => a.status === "completed" && a.imageUrl).map((a) => a.imageUrl as string);
+  const completedImages = graphic.assets
+    .filter((a) => a.status === "completed" && a.imageUrl)
+    .map((a) => a.imageUrl as string);
+  const isGenerating = graphic.assets.some((a) => a.status === "generating");
 
   async function act(body: object) {
     setBusy(true);
@@ -179,148 +195,290 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
     setEditing(false);
   }
 
-  return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
-      <div className="flex flex-col lg:flex-row">
-        {/* Images */}
-        <div className="flex gap-3 p-4 lg:w-[58%] flex-wrap">
-          {graphic.assets.map((a) => (
-            <div key={a.id} className="flex flex-col gap-1.5">
-              <div
-                className={cn(
-                  "relative overflow-hidden rounded-lg border border-border bg-muted",
-                  a.format === "story" ? "w-[120px] h-[213px]" : a.format === "ig_feed" ? "w-[150px] h-[188px]" : "w-[180px] h-[180px]"
-                )}
-              >
-                {a.status === "generating" ? (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-muted-foreground/50">
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    <span className="text-[10px]">generating</span>
-                  </div>
-                ) : a.status === "error" ? (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-red-400 px-2 text-center">
-                    <AlertCircle className="h-5 w-5" />
-                    <span className="text-[9px]">failed</span>
-                  </div>
-                ) : a.imageUrl ? (
-                  <button
-                    type="button"
-                    onClick={() => setLightbox({ images: completedImages, start: Math.max(0, completedImages.indexOf(a.imageUrl as string)) })}
-                    className="group absolute inset-0 cursor-zoom-in"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={a.imageUrl} alt={a.format} className="h-full w-full object-cover" />
-                    <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover:bg-black/30 group-hover:opacity-100">
-                      <Expand className="h-5 w-5 text-white" />
-                    </span>
-                  </button>
-                ) : (
-                  <div className="absolute inset-0 flex items-center justify-center text-muted-foreground/30">
-                    <ImageIcon className="h-6 w-6" />
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-medium text-muted-foreground">{FORMAT_LABELS[a.format] || a.format}</span>
-                {a.status === "completed" && a.imageUrl && (
-                  <button onClick={() => downloadAsset(a, graphic)} className="text-muted-foreground/60 hover:text-foreground" title="Download">
-                    <Download className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+  const initial = (graphic.reviewerName || "?").trim().charAt(0).toUpperCase();
 
-        {/* Details */}
-        <div className="flex-1 border-t lg:border-t-0 lg:border-l border-border p-4 space-y-3">
-          {/* Source review */}
+  return (
+    <article className="group/card relative overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
+      {/* top hairline accent */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
+
+      {/* Header */}
+      <header className="flex items-center gap-3 border-b border-border/60 px-5 py-3.5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-semibold text-primary">
+          {initial}
+        </div>
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-foreground">{graphic.reviewerName || "Anonymous"}</span>
+            <span className="truncate text-sm font-semibold text-foreground">{graphic.reviewerName || "Anonymous"}</span>
             {graphic.stars != null && (
-              <span className="flex items-center gap-0.5">
+              <span className="flex shrink-0 items-center gap-0.5">
                 {Array.from({ length: graphic.stars }).map((_, i) => (
                   <Star key={i} className="h-3 w-3 fill-amber-400 text-amber-400" />
                 ))}
               </span>
             )}
-            <StatusBadge status={graphic.status} />
           </div>
           {graphic.reviewText && (
-            <p className="text-[11px] text-muted-foreground/70 line-clamp-2 italic">&ldquo;{graphic.reviewText}&rdquo;</p>
+            <p className="truncate text-[11px] italic text-muted-foreground/70">&ldquo;{graphic.reviewText}&rdquo;</p>
           )}
-
-          {/* Captions */}
-          {editing ? (
-            <div className="space-y-2">
-              <EditField label="Pull quote" value={form.pullQuote} onChange={(v) => setForm({ ...form, pullQuote: v })} />
-              <EditField label="Instagram caption" value={form.instagramCaption} onChange={(v) => setForm({ ...form, instagramCaption: v })} multiline />
-              <EditField label="Story caption" value={form.storiesCaption} onChange={(v) => setForm({ ...form, storiesCaption: v })} multiline />
-              <EditField label="Facebook caption" value={form.facebookCaption} onChange={(v) => setForm({ ...form, facebookCaption: v })} multiline />
-              <EditField label="CTA" value={form.cta} onChange={(v) => setForm({ ...form, cta: v })} />
-              <EditField label="Hashtags (comma separated)" value={form.hashtags} onChange={(v) => setForm({ ...form, hashtags: v })} />
-            </div>
-          ) : (
-            <div className="space-y-1.5 text-[12px]">
-              {graphic.pullQuote && <p className="font-medium text-foreground">&ldquo;{graphic.pullQuote}&rdquo;</p>}
-              {graphic.instagramCaption && <CaptionRow label="IG" text={graphic.instagramCaption} />}
-              {graphic.storiesCaption && <CaptionRow label="Story" text={graphic.storiesCaption} />}
-              {graphic.facebookCaption && <CaptionRow label="FB" text={graphic.facebookCaption} />}
-              {graphic.cta && <p className="text-[11px] text-primary font-medium">CTA: {graphic.cta}</p>}
-              {graphic.hashtags && graphic.hashtags.length > 0 && (
-                <p className="text-[11px] text-muted-foreground/60">
-                  {graphic.hashtags.map((h) => `#${h}`).join(" ")}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="flex flex-wrap gap-2 pt-1">
-            {editing ? (
-              <>
-                <ActionBtn onClick={saveCaptions} disabled={busy} icon={Save} label="Save" primary />
-                <ActionBtn onClick={() => setEditing(false)} disabled={busy} icon={X} label="Cancel" />
-              </>
-            ) : (
-              <>
-                {graphic.status !== "approved" && (
-                  <ActionBtn onClick={() => act({ action: "approve" })} disabled={busy} icon={Check} label="Approve" primary />
-                )}
-                {graphic.status !== "rejected" && (
-                  <ActionBtn onClick={() => act({ action: "reject" })} disabled={busy} icon={X} label="Reject" />
-                )}
-                <ActionBtn onClick={() => setEditing(true)} disabled={busy} icon={Pencil} label="Edit copy" />
-              </>
-            )}
-          </div>
         </div>
+        <StatusPill status={graphic.status} />
+      </header>
+
+      {/* Body */}
+      <div className="grid gap-6 p-5 lg:grid-cols-[auto_minmax(0,1fr)]">
+        {/* Preview rail — the hero */}
+        <div className="flex flex-wrap justify-center gap-3 lg:justify-start">
+          {graphic.assets.map((a) => {
+            const meta = FORMAT_META[a.format] || { label: a.format, icon: ImageIcon, aspect: "aspect-square" };
+            const Icon = meta.icon;
+            const clickable = a.status === "completed" && a.imageUrl;
+            return (
+              <div key={a.id} className="flex flex-col items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    clickable && setLightbox({ images: completedImages, start: Math.max(0, completedImages.indexOf(a.imageUrl as string)) })
+                  }
+                  className={cn(
+                    "group/thumb relative h-60 overflow-hidden rounded-xl border border-border bg-muted shadow-md ring-1 ring-black/20 transition-all",
+                    meta.aspect,
+                    clickable ? "cursor-zoom-in hover:-translate-y-0.5 hover:shadow-xl hover:ring-primary/30" : "cursor-default"
+                  )}
+                >
+                  {a.status === "generating" ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-muted-foreground/60">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      <span className="text-[10px]">generating…</span>
+                    </div>
+                  ) : a.status === "error" ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-2 text-center text-red-400">
+                      <AlertCircle className="h-5 w-5" />
+                      <span className="text-[9px]">failed</span>
+                    </div>
+                  ) : a.imageUrl ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={a.imageUrl} alt={meta.label} className="h-full w-full object-cover" />
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover/thumb:bg-black/35 group-hover/thumb:opacity-100">
+                        <Expand className="h-5 w-5 text-white" />
+                      </span>
+                    </>
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center text-muted-foreground/30">
+                      <ImageIcon className="h-6 w-6" />
+                    </div>
+                  )}
+                </button>
+                <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                  <Icon className="h-3.5 w-3.5" />
+                  {meta.label}
+                  {clickable && (
+                    <button
+                      onClick={() => downloadAsset(a, graphic)}
+                      className="ml-1 text-muted-foreground/50 transition-colors hover:text-primary"
+                      title="Download"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Caption panel */}
+        {editing ? (
+          <div className="space-y-2">
+            <EditField label="Pull quote" value={form.pullQuote} onChange={(v) => setForm({ ...form, pullQuote: v })} />
+            <EditField label="Instagram caption" value={form.instagramCaption} onChange={(v) => setForm({ ...form, instagramCaption: v })} multiline />
+            <EditField label="Story caption" value={form.storiesCaption} onChange={(v) => setForm({ ...form, storiesCaption: v })} multiline />
+            <EditField label="Facebook caption" value={form.facebookCaption} onChange={(v) => setForm({ ...form, facebookCaption: v })} multiline />
+            <EditField label="CTA" value={form.cta} onChange={(v) => setForm({ ...form, cta: v })} />
+            <EditField label="Hashtags (comma separated)" value={form.hashtags} onChange={(v) => setForm({ ...form, hashtags: v })} />
+          </div>
+        ) : isGenerating && !graphic.pullQuote ? (
+          <div className="flex items-center justify-center text-sm text-muted-foreground/50">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Writing captions…
+          </div>
+        ) : (
+          <CaptionPanel graphic={graphic} />
+        )}
       </div>
+
+      {/* Footer actions */}
+      <footer className="flex items-center gap-2 border-t border-border/60 bg-background/40 px-5 py-3">
+        {editing ? (
+          <>
+            <button
+              onClick={saveCaptions}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save copy
+            </button>
+            <GhostBtn onClick={() => setEditing(false)} disabled={busy} icon={X} label="Cancel" />
+          </>
+        ) : (
+          <>
+            {graphic.status !== "approved" && (
+              <button
+                onClick={() => act({ action: "approve" })}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:bg-emerald-600 disabled:opacity-50"
+              >
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Approve
+              </button>
+            )}
+            {graphic.status !== "rejected" && (
+              <GhostBtn onClick={() => act({ action: "reject" })} disabled={busy} icon={X} label="Reject" danger />
+            )}
+            <GhostBtn onClick={() => setEditing(true)} disabled={busy} icon={Pencil} label="Edit copy" />
+          </>
+        )}
+      </footer>
+
       {lightbox && <Lightbox images={lightbox.images} start={lightbox.start} onClose={() => setLightbox(null)} />}
+    </article>
+  );
+}
+
+const PLATFORMS = [
+  { key: "instagram", label: "Instagram", icon: Instagram, get: (g: Graphic) => g.instagramCaption },
+  { key: "story", label: "Story", icon: RectangleVertical, get: (g: Graphic) => g.storiesCaption },
+  { key: "facebook", label: "Facebook", icon: Facebook, get: (g: Graphic) => g.facebookCaption },
+] as const;
+
+function CaptionPanel({ graphic }: { graphic: Graphic }) {
+  const [tab, setTab] = useState<(typeof PLATFORMS)[number]["key"]>("instagram");
+  const active = PLATFORMS.find((p) => p.key === tab)!;
+  const caption = active.get(graphic) || "";
+  const hashtags = graphic.hashtags || [];
+  const hashtagStr = hashtags.map((h) => `#${h}`).join(" ");
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Pull quote — the headline */}
+      {graphic.pullQuote && (
+        <div className="relative rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+          <Quote className="absolute left-3 top-2.5 h-4 w-4 text-primary/40" />
+          <p className="pl-5 text-[15px] font-semibold leading-snug text-foreground">{graphic.pullQuote}</p>
+        </div>
+      )}
+
+      {/* Platform segmented tabs */}
+      <div className="inline-flex w-fit items-center gap-1 rounded-lg bg-muted/50 p-0.5">
+        {PLATFORMS.map((p) => {
+          const Icon = p.icon;
+          return (
+            <button
+              key={p.key}
+              onClick={() => setTab(p.key)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-medium transition-all",
+                tab === p.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Selected caption */}
+      <div className="relative rounded-lg border border-border bg-background/40 p-3">
+        <div className="absolute right-2 top-2">
+          <CopyButton text={caption} />
+        </div>
+        <p className="max-h-40 overflow-y-auto whitespace-pre-wrap pr-14 text-[12.5px] leading-relaxed text-muted-foreground">
+          {caption || <span className="italic text-muted-foreground/50">No {active.label} caption</span>}
+        </p>
+      </div>
+
+      {/* CTA + hashtags */}
+      <div className="flex flex-wrap items-center gap-2">
+        {graphic.cta && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-medium text-primary">
+            <Megaphone className="h-3 w-3" />
+            {graphic.cta}
+          </span>
+        )}
+      </div>
+
+      {hashtags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {hashtags.map((h) => (
+            <span key={h} className="rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
+              #{h}
+            </span>
+          ))}
+          <CopyButton text={hashtagStr} label="Copy all" className="ml-1" />
+        </div>
+      )}
     </div>
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    draft: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
-    approved: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-    rejected: "bg-red-500/15 text-red-600 dark:text-red-400",
-    generating: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-    error: "bg-red-500/15 text-red-600 dark:text-red-400",
-  };
+function CopyButton({ text, label = "Copy", className }: { text: string; label?: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  if (!text) return null;
   return (
-    <span className={cn("ml-auto rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide", map[status] || "bg-muted text-muted-foreground")}>
+    <button
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          /* clipboard unavailable */
+        }
+      }}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+        copied ? "bg-emerald-500/10 text-emerald-400" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+        className
+      )}
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      {copied ? "Copied" : label}
+    </button>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const map: Record<string, { dot: string; text: string; bg: string }> = {
+    draft: { dot: "bg-blue-400", text: "text-blue-400", bg: "bg-blue-500/10" },
+    approved: { dot: "bg-emerald-400", text: "text-emerald-400", bg: "bg-emerald-500/10" },
+    rejected: { dot: "bg-red-400", text: "text-red-400", bg: "bg-red-500/10" },
+    generating: { dot: "bg-amber-400 animate-pulse", text: "text-amber-400", bg: "bg-amber-500/10" },
+    error: { dot: "bg-red-400", text: "text-red-400", bg: "bg-red-500/10" },
+  };
+  const s = map[status] || { dot: "bg-muted-foreground", text: "text-muted-foreground", bg: "bg-muted" };
+  return (
+    <span className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide", s.bg, s.text)}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", s.dot)} />
       {status}
     </span>
   );
 }
 
-function CaptionRow({ label, text }: { label: string; text: string }) {
+function GhostBtn({
+  onClick, disabled, icon: Icon, label, danger,
+}: { onClick: () => void; disabled?: boolean; icon: React.ComponentType<{ className?: string }>; label: string; danger?: boolean }) {
   return (
-    <p className="text-[11px] text-muted-foreground">
-      <span className="font-semibold text-muted-foreground/80">{label}:</span> {text}
-    </p>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium transition-all disabled:opacity-50",
+        danger ? "text-muted-foreground hover:border-red-500/40 hover:text-red-400" : "text-muted-foreground hover:text-foreground hover:border-primary/30"
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
   );
 }
 
@@ -343,25 +501,5 @@ function EditField({ label, value, onChange, multiline }: { label: string; value
         />
       )}
     </label>
-  );
-}
-
-function ActionBtn({
-  onClick, disabled, icon: Icon, label, primary,
-}: { onClick: () => void; disabled?: boolean; icon: React.ComponentType<{ className?: string }>; label: string; primary?: boolean }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all disabled:opacity-50",
-        primary
-          ? "bg-primary text-primary-foreground hover:opacity-90"
-          : "border border-border bg-background text-muted-foreground hover:text-foreground"
-      )}
-    >
-      <Icon className="h-3.5 w-3.5" />
-      {label}
-    </button>
   );
 }

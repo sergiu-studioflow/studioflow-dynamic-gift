@@ -1,18 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { Quote, Sparkles, LayoutGrid } from "lucide-react";
+import { Quote, Sparkles, LayoutGrid, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ReviewList } from "@/components/review-graphics/review-list";
 import { ReviewGenerator } from "@/components/review-graphics/review-generator";
 import { ReviewGallery } from "@/components/review-graphics/review-gallery";
 
 const TABS = [
+  { key: "reviews", label: "Reviews", icon: MessageSquare },
   { key: "generate", label: "Generate", icon: Sparkles },
   { key: "gallery", label: "Gallery", icon: LayoutGrid },
 ];
 
 export default function ReviewGraphicsPage() {
-  const [activeTab, setActiveTab] = useState("generate");
+  const [activeTab, setActiveTab] = useState("reviews");
   const [galleryRefresh, setGalleryRefresh] = useState(0);
 
   return (
@@ -40,6 +42,17 @@ export default function ReviewGraphicsPage() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto">
+        {activeTab === "reviews" && (
+          <div className="p-6">
+            <ReviewList
+              onGenerated={() => {
+                setGalleryRefresh((n) => n + 1);
+                setActiveTab("gallery");
+              }}
+            />
+          </div>
+        )}
+
         {activeTab === "generate" && (
           <ReviewGenerator
             onGenerated={() => {

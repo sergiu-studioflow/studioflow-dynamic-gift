@@ -53,22 +53,35 @@ export async function POST(req: NextRequest) {
     .join("\n\n")
     .trim() || null;
 
-  // Qualifying, un-rendered reviews (newest first)
-  const candidates = await db
-    .select()
-    .from(schema.reviews)
-    .where(
-      and(
-        eq(schema.reviews.brandId, clientId),
-        eq(schema.reviews.qualifiesForRender, true),
-        eq(schema.reviews.rendered, false)
-      )
-    )
-    .orderBy(desc(schema.reviews.publishedAt))
-    .limit(limit);
+  // Either a specific review (picked from the Reviews tab) or the newest
+  // qualifying un-rendered reviews (the bulk "generate next N" flow).
+  const reviewId = typeof body.reviewId === "string" ? body.reviewId : null;
+  const candidates = reviewId
+    ? await db
+        .select()
+        .from(schema.reviews)
+        .where(and(eq(schema.reviews.brandId, clientId), eq(schema.reviews.reviewId, reviewId)))
+        .limit(1)
+    : await db
+        .select()
+        .from(schema.reviews)
+        .where(
+          and(
+            eq(schema.reviews.brandId, clientId),
+            eq(schema.reviews.qualifiesForRender, true),
+            eq(schema.reviews.rendered, false)
+          )
+        )
+        .orderBy(desc(schema.reviews.publishedAt))
+        .limit(limit);
 
   if (candidates.length === 0) {
-    return NextResponse.json({ generated: [], message: "No new reviews with customer photos to generate from." });
+    return NextResponse.json({
+      generated: [],
+      message: reviewId
+        ? "Review not found for this brand."
+        : "No new reviews with customer photos to generate from.",
+    });
   }
 
   const generated: string[] = [];

@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
         text: schema.reviews.text,
         textTranslated: schema.reviews.textTranslated,
         reviewImageUrls: schema.reviews.reviewImageUrls,
+        archivedImageUrls: schema.reviews.archivedImageUrls,
         publishedAt: schema.reviews.publishedAt,
         qualifiesForRender: schema.reviews.qualifiesForRender,
         rendered: schema.reviews.rendered,
@@ -52,10 +53,18 @@ export async function GET(req: NextRequest) {
       .where(eq(schema.reviews.brandId, clientId))
       .limit(1);
 
-    const result = rows.map((r) => ({
-      ...r,
-      images: Array.isArray(r.reviewImageUrls) ? (r.reviewImageUrls as string[]) : [],
-    }));
+    const result = rows.map((r) => {
+      const archived = Array.isArray(r.archivedImageUrls) ? (r.archivedImageUrls as string[]) : [];
+      const original = Array.isArray(r.reviewImageUrls) ? (r.reviewImageUrls as string[]) : [];
+      // Prefer permanent R2 copies; raw Google CDN urls expire (403). `photoCount`
+      // reflects that a photo exists even before it's been archived.
+      return {
+        ...r,
+        images: archived.length ? archived : original,
+        archived: archived.length > 0,
+        photoCount: Math.max(archived.length, original.length),
+      };
+    });
 
     return NextResponse.json({ reviews: result, hasData: !!counts });
   } catch (err) {

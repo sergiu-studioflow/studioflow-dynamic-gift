@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { isAuthorizedCron } from "@/lib/cron-auth";
 import { getRunStatus, getDatasetItems, normalizeReview } from "@/lib/apify";
 import { uploadToR2 } from "@/lib/r2";
@@ -94,22 +94,38 @@ async function ingestRun(run: typeof schema.reviewScrapeRuns.$inferSelect, datas
         reviewImageUrls: schema.reviews.reviewImageUrls,
       });
     newCount = inserted.length;
+  }
 
-    // Archive customer photos for new reviews that qualify (>=4 stars + has photos)
-    for (const row of inserted) {
-      const imgs = Array.isArray(row.reviewImageUrls) ? (row.reviewImageUrls as string[]) : [];
-      if ((row.stars ?? 0) >= 4 && imgs.length > 0) {
-        const archived = await archivePhotos({
-          externalReviewId: row.reviewId,
-          clientId: run.clientId,
-          imageUrls: imgs,
-        });
-        if (archived.length > 0) {
-          await db
-            .update(schema.reviews)
-            .set({ archivedImageUrls: archived })
-            .where(eq(schema.reviews.reviewId, row.reviewId));
-        }
+  // Archive customer photos to R2 for ALL qualifying reviews that lack an
+  // archive, using the FRESH scrape URLs (Google CDN urls expire/403 over time
+  // — R2 copies are permanent + hotlinkable). Refresh review_image_urls too so
+  // the stored urls match what we archived. Only reviews present in this scrape
+  // window can be archived; older ones get picked up by a larger scrape.
+  if (valid.length > 0 && run.clientId) {
+    const freshById = new Map(valid.map((n) => [n.reviewId, n.reviewImageUrls]));
+    const needArchive = await db
+      .select({ reviewId: schema.reviews.reviewId })
+      .from(schema.reviews)
+      .where(
+        and(
+          eq(schema.reviews.brandId, run.clientId),
+          eq(schema.reviews.qualifiesForRender, true),
+          sql`jsonb_array_length(coalesce(${schema.reviews.archivedImageUrls}, '[]'::jsonb)) = 0`
+        )
+      );
+    for (const row of needArchive) {
+      const fresh = freshById.get(row.reviewId);
+      if (!fresh || fresh.length === 0) continue; // not in this scrape window
+      const archived = await archivePhotos({
+        externalReviewId: row.reviewId,
+        clientId: run.clientId,
+        imageUrls: fresh,
+      });
+      if (archived.length > 0) {
+        await db
+          .update(schema.reviews)
+          .set({ archivedImageUrls: archived, reviewImageUrls: fresh })
+          .where(eq(schema.reviews.reviewId, row.reviewId));
       }
     }
   }

@@ -12,10 +12,29 @@ type Review = {
   text: string | null;
   textTranslated: string | null;
   images: string[];
+  archived: boolean;
+  photoCount: number;
   publishedAt: string | null;
   qualifiesForRender: boolean | null;
   rendered: boolean;
 };
+
+/** Thumbnail that falls back to a placeholder if the image URL is dead (stale Google CDN urls 403 until archived to R2). */
+function ReviewThumb({ url, photoCount, archived }: { url: string | null; photoCount: number; archived: boolean }) {
+  const [broken, setBroken] = useState(false);
+  if (!url || broken) {
+    return (
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-muted-foreground/25">
+        <ImageIcon className="h-8 w-8" />
+        {photoCount > 0 && !archived && (
+          <span className="text-[9px] text-muted-foreground/40">photo archives on next refresh</span>
+        )}
+      </div>
+    );
+  }
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={url} alt="review photo" className="h-full w-full object-cover" onError={() => setBroken(true)} />;
+}
 
 const FILTERS = [
   { key: "qualifying", label: "Ready to use (photo + 4★)" },
@@ -110,17 +129,10 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
             <div key={r.reviewId} className="flex flex-col rounded-xl border border-border bg-card overflow-hidden">
               {/* Photo */}
               <div className="relative aspect-[4/3] bg-muted">
-                {r.images.length > 0 ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={r.images[0]} alt="review photo" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="absolute inset-0 flex items-center justify-center text-muted-foreground/25">
-                    <ImageIcon className="h-8 w-8" />
-                  </div>
-                )}
-                {r.images.length > 1 && (
+                <ReviewThumb url={r.images[0] || null} photoCount={r.photoCount} archived={r.archived} />
+                {r.photoCount > 1 && (
                   <span className="absolute bottom-1.5 right-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
-                    +{r.images.length - 1}
+                    +{r.photoCount - 1}
                   </span>
                 )}
                 {r.rendered && (

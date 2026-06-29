@@ -1,15 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Quote, Sparkles, LayoutGrid, MessageSquare } from "lucide-react";
+import { Quote, LayoutGrid, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ReviewList } from "@/components/review-graphics/review-list";
-import { ReviewGenerator } from "@/components/review-graphics/review-generator";
 import { ReviewGallery } from "@/components/review-graphics/review-gallery";
 
 const TABS = [
   { key: "reviews", label: "Reviews", icon: MessageSquare },
-  { key: "generate", label: "Generate", icon: Sparkles },
   { key: "gallery", label: "Gallery", icon: LayoutGrid },
 ];
 
@@ -51,15 +49,6 @@ export default function ReviewGraphicsPage() {
               }}
             />
           </div>
-        )}
-
-        {activeTab === "generate" && (
-          <ReviewGenerator
-            onGenerated={() => {
-              setGalleryRefresh((n) => n + 1);
-              setActiveTab("gallery");
-            }}
-          />
         )}
         {activeTab === "gallery" && (
           <div className="p-6">

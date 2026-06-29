@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Loader2, Star, Quote, Sparkles, ImageIcon, Check, MessageSquare, Expand } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Loader2, Star, Quote, Sparkles, ImageIcon, Check, MessageSquare, Expand, RefreshCw, ChevronDown, AlertTriangle } from "lucide-react";
 import { useClient } from "@/lib/client-context";
 import { cn } from "@/lib/utils";
 import { Lightbox } from "@/components/review-graphics/lightbox";
@@ -45,12 +45,17 @@ const FILTERS = [
 ];
 
 export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
-  const { clientId, clientName, isReady } = useClient();
+  const { clientId, clientName, clientSlug, isReady } = useClient();
   const [filter, setFilter] = useState("qualifying");
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<string[] | null>(null);
+  const [pulling, setPulling] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     if (!clientId) return;
@@ -70,6 +75,15 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
     if (isReady) load();
   }, [load, isReady]);
 
+  // close the "generate newest" menu on outside click
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
   async function generate(reviewId: string) {
     if (!clientId) return;
     setBusyId(reviewId);
@@ -88,6 +102,52 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
     }
   }
 
+  async function generateNewest(n: number) {
+    if (!clientId) return;
+    setMenuOpen(false);
+    setBulkBusy(true);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/review-graphics/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, limit: n }),
+      });
+      const data = await res.json();
+      if (res.ok && data.count > 0) {
+        setTimeout(onGenerated, 400);
+      } else {
+        setNotice({ kind: "err", text: data.message || "No new reviews with photos to generate from." });
+      }
+    } catch {
+      setNotice({ kind: "err", text: "Generation failed." });
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function pullLatest() {
+    if (!clientId) return;
+    setPulling(true);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/cron/review-ingest?clientId=${clientId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to start review fetch");
+      if (data.started > 0) {
+        setNotice({ kind: "ok", text: "Fetching the latest reviews from Google — new ones appear within a few minutes." });
+      } else if (data.skipped > 0) {
+        setNotice({ kind: "ok", text: "A review fetch is already running — give it a minute, then refresh." });
+      } else {
+        setNotice({ kind: "err", text: "This brand has no Google Maps URL configured for reviews yet." });
+      }
+    } catch (e) {
+      setNotice({ kind: "err", text: e instanceof Error ? e.message : "Failed to fetch reviews" });
+    } finally {
+      setPulling(false);
+    }
+  }
+
   if (!isReady || loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -98,23 +158,76 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-2">
-        {FILTERS.map((f) => (
+      {/* Toolbar: filters (left) + actions (right) */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card/60 p-1">
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setFilter(f.key)}
+              className={cn(
+                "rounded-full px-3 py-1.5 text-xs font-medium transition-all",
+                filter === f.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          <span className="hidden text-xs text-muted-foreground sm:inline">
+            {reviews.length} {clientName} review{reviews.length === 1 ? "" : "s"}
+          </span>
           <button
-            key={f.key}
-            onClick={() => setFilter(f.key)}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-xs font-medium transition-all",
-              filter === f.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
-            )}
+            onClick={pullLatest}
+            disabled={pulling}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground transition-all hover:text-foreground hover:border-primary/30 disabled:opacity-50"
           >
-            {f.label}
+            {pulling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Pull latest reviews
           </button>
-        ))}
-        <span className="ml-auto text-xs text-muted-foreground">
-          {reviews.length} {clientName} review{reviews.length === 1 ? "" : "s"}
-        </span>
+          {/* Generate newest N */}
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setMenuOpen((o) => !o)}
+              disabled={bulkBusy}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50"
+            >
+              {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              Generate newest
+              <ChevronDown className="h-3.5 w-3.5 opacity-80" />
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+                {[1, 2, 3, 5].map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => generateNewest(n)}
+                    className="flex w-full items-center justify-between px-3 py-2 text-xs text-foreground transition-colors hover:bg-accent"
+                  >
+                    <span>Newest {n}</span>
+                    <span className="text-[10px] text-muted-foreground">review{n === 1 ? "" : "s"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
+
+      {clientSlug === "indigenous-promotions" && (
+        <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[12px] text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Indigenous Promotions: review every graphic carefully for cultural representation before approving. Nothing is auto-published.</span>
+        </div>
+      )}
+
+      {notice && (
+        <p className={cn("text-xs", notice.kind === "ok" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+          {notice.text}
+        </p>
+      )}
 
       {reviews.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground/40">
@@ -122,8 +235,8 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
           <p className="text-sm">No reviews in this view</p>
           <p className="text-[11px] text-muted-foreground/30">
             {filter === "qualifying"
-              ? "No 4★+ reviews with customer photos yet — try 'All reviews', or Pull latest reviews in the Generate tab"
-              : "Pull latest reviews from the Generate tab"}
+              ? "No 4★+ reviews with customer photos yet — try 'All reviews', or hit 'Pull latest reviews'"
+              : "Hit 'Pull latest reviews' to fetch from Google"}
           </p>
         </div>
       ) : (

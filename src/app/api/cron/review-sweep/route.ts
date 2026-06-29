@@ -52,9 +52,14 @@ async function ingestRun(run: typeof schema.reviewScrapeRuns.$inferSelect, datas
   const items = await getDatasetItems(datasetId, 500);
   const normalized = items.map(normalizeReview).filter((r): r is NonNullable<typeof r> => r !== null);
 
+  // The reviews table has NOT NULL stars + place_id; a single bad row fails the
+  // whole multi-row insert, so drop malformed items. `has_photos` and
+  // `qualifies_for_render` are GENERATED columns — never insert them.
+  const valid = normalized.filter((n) => n.stars != null && n.placeId != null);
+
   let newCount = 0;
-  if (normalized.length > 0) {
-    const values = normalized.map((n) => ({
+  if (valid.length > 0) {
+    const values = valid.map((n) => ({
       reviewId: n.reviewId,
       brandId: run.clientId,
       reviewerId: n.reviewerId,
@@ -67,7 +72,6 @@ async function ingestRun(run: typeof schema.reviewScrapeRuns.$inferSelect, datas
       language: n.language,
       originalLanguage: n.originalLanguage,
       reviewImageUrls: n.reviewImageUrls,
-      hasPhotos: n.hasPhotos,
       reviewUrl: n.reviewUrl,
       reviewOrigin: n.reviewOrigin,
       publishedAt: n.publishedAt ? new Date(n.publishedAt) : null,

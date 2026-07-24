@@ -40,6 +40,12 @@ export async function queuePost(input: QueueInput): Promise<QueueResult> {
     .where(eq(schema.socialAccounts.clientId, src.clientId));
   const accountByPlatform = new Map(accounts.map((a) => [a.platform, a]));
 
+  // Only create targets for platforms this brand actually has a connected +
+  // enabled account for. If NONE are connected yet (initial setup), fall back to
+  // all requested platforms so early drafts still work and can be connected later.
+  const connected = platforms.filter((p) => accountByPlatform.get(p)?.enabled);
+  const activePlatforms = connected.length ? connected : platforms;
+
   const [parent] = await db
     .insert(schema.scheduledPosts)
     .values({
@@ -60,7 +66,7 @@ export async function queuePost(input: QueueInput): Promise<QueueResult> {
   const storageBase = (await getClientStoragePrefix(src.clientId)) || `brands/${BRAND_SLUG}`;
 
   const targetRows: (typeof schema.postTargets.$inferInsert)[] = [];
-  for (const platform of platforms) {
+  for (const platform of activePlatforms) {
     const route = routePlacement(platform, src.mediaType, probed.width, probed.height);
     let mediaOverrideUrl: string | null = null;
 
@@ -105,7 +111,7 @@ export async function queuePost(input: QueueInput): Promise<QueueResult> {
   try {
     if (src.reviewCaptions) {
       // review_graphic: map existing captions, skip Claude.
-      for (const platform of platforms) {
+      for (const platform of activePlatforms) {
         const t = targetRows.find((r) => r.platform === platform);
         const isStory = t?.placement === "story";
         const caption =
@@ -124,10 +130,10 @@ export async function queuePost(input: QueueInput): Promise<QueueResult> {
       const { captions, angleTag: tag } = await generateOrganicCaptions({
         clientId: src.clientId,
         sourceContext,
-        platforms,
+        platforms: activePlatforms,
       });
       angleTag = tag;
-      for (const platform of platforms) {
+      for (const platform of activePlatforms) {
         const c = captions[platform];
         await db
           .update(schema.postTargets)

@@ -26,7 +26,7 @@ const STATIC_AD_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotio
 const VIDEO_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
 const RESEARCH_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
 const REVIEW_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
-const POSTING_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
+const POSTING_CLIENTS = ["dynamic-gift", "the-cap-company", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
 
 const baseNavigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Instagram, Facebook, CheckCircle2, XCircle, HelpCircle, Loader2, Save } from "lucide-react";
+import { Instagram, Facebook, CheckCircle2, XCircle, HelpCircle, Loader2, Save, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useClient } from "@/lib/client-context";
 import type { SocialAccount, PostingPrefs } from "./types";
@@ -23,6 +23,9 @@ export function AccountsManager() {
   const [busy, setBusy] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<PostingPrefs | null>(null);
   const [savingPrefs, setSavingPrefs] = useState(false);
+  const [discovered, setDiscovered] = useState<{ pageId: string; pageName: string; igUserId: string | null; igUsername: string | null }[] | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverErr, setDiscoverErr] = useState("");
 
   const load = useCallback(async () => {
     if (!clientId) return;
@@ -85,6 +88,46 @@ export function AccountsManager() {
     }
   }
 
+  async function discover() {
+    setDiscovering(true);
+    setDiscoverErr("");
+    try {
+      const res = await fetch("/api/posting/accounts/discover");
+      const data = await res.json();
+      if (!res.ok) {
+        setDiscoverErr(data.error || "Discovery failed");
+        setDiscovered(null);
+      } else {
+        setDiscovered(data.pages || []);
+      }
+    } finally {
+      setDiscovering(false);
+    }
+  }
+
+  async function assignDiscovered(platform: "facebook" | "instagram", externalId: string) {
+    if (!clientId) return;
+    setBusy(platform);
+    try {
+      const res = await fetch("/api/posting/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId, platform, externalId }),
+      });
+      const acct = await res.json();
+      if (res.ok && acct?.id) {
+        await fetch("/api/posting/accounts/test", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: acct.id }),
+        });
+      }
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function savePrefs() {
     if (!clientId || !prefs) return;
     setSavingPrefs(true);
@@ -107,10 +150,43 @@ export function AccountsManager() {
   return (
     <div className="max-w-3xl space-y-8">
       <div>
-        <h3 className="mb-1 text-sm font-semibold">Connected accounts — {clientName}</h3>
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold">Connected accounts — {clientName}</h3>
+          <Button size="sm" variant="outline" onClick={discover} disabled={discovering}>
+            {discovering ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Search className="mr-1 h-3.5 w-3.5" />}
+            Discover from Meta
+          </Button>
+        </div>
         <p className="mb-4 text-xs text-muted-foreground">
-          Enter the Facebook Page ID and Instagram Business account ID for this brand. One agency Meta System User token (Settings → API Keys → Meta System User Token) authorises all brands. Hit Test to verify.
+          Enter the Facebook Page ID and Instagram Business account ID for this brand — or hit <strong>Discover from Meta</strong> to pull every Page + IG the token can post to and assign with one click. One agency Meta System User token (Settings → API Keys) authorises all brands.
         </p>
+
+        {discoverErr && <p className="mb-3 text-xs text-destructive">{discoverErr}</p>}
+        {discovered && (
+          <div className="mb-4 rounded-xl border border-border bg-muted/20 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-medium">{discovered.length} page(s) the token can post to — assign to {clientName}:</span>
+              <button onClick={() => setDiscovered(null)} className="text-xs text-muted-foreground hover:underline">hide</button>
+            </div>
+            <div className="max-h-72 space-y-1.5 overflow-y-auto">
+              {discovered.map((p) => (
+                <div key={p.pageId} className="flex items-center gap-2 rounded-md border border-border/50 bg-background px-2.5 py-1.5 text-xs">
+                  <span className="min-w-0 flex-1 truncate font-medium">{p.pageName}</span>
+                  <Button size="sm" variant="ghost" className="h-6 gap-1 px-2 text-[11px]" onClick={() => assignDiscovered("facebook", p.pageId)} disabled={busy !== null}>
+                    <Facebook className="h-3 w-3" /> Set FB
+                  </Button>
+                  {p.igUserId ? (
+                    <Button size="sm" variant="ghost" className="h-6 gap-1 px-2 text-[11px]" onClick={() => assignDiscovered("instagram", p.igUserId!)} disabled={busy !== null}>
+                      <Instagram className="h-3 w-3" /> Set IG{p.igUsername ? ` @${p.igUsername}` : ""}
+                    </Button>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground">no IG</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="space-y-3">
           {PLATFORMS.map((platform) => {
             const acct = accountFor(platform);

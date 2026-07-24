@@ -36,6 +36,8 @@ type CallClaudeOptions = {
   maxTokens?: number;
   budgetTokens?: number;
   model?: string;
+  /** Override the API key (e.g. a vault-managed key from getApiKey()). Falls back to env. */
+  apiKey?: string;
 };
 
 type CallClaudeResult = {
@@ -139,12 +141,13 @@ export async function imageUrlToBase64Block(
 }
 
 export async function callClaude(options: CallClaudeOptions): Promise<CallClaudeResult> {
-  const { system, messages, maxTokens = 16000, budgetTokens = 10000, model } = options;
+  const { system, messages, maxTokens = 16000, budgetTokens = 10000, model, apiKey } = options;
+  const key = (apiKey || "").trim() || getApiKey();
 
   const response = await fetch(ANTHROPIC_API_URL, {
     method: "POST",
     headers: {
-      "x-api-key": getApiKey(),
+      "x-api-key": key,
       "anthropic-version": "2023-06-01",
       "content-type": "application/json",
     },

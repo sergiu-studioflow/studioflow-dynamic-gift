@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ImageIcon, Loader2, AlertCircle, Download, Trash2, Trophy, CheckCircle2, Layers, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { SendToQueueButton } from "@/components/posting/send-to-queue-button";
 
 export type StaticAdGeneration = {
   id: string;
@@ -167,6 +168,16 @@ export function AdCard({ generation, onClick, onDownload, onDelete }: AdCardProp
               <Download className="h-3 w-3" />
               Download
             </button>
+          )}
+          {generation.status === "completed" && generation.imageUrl && (
+            <span onClick={(e) => e.stopPropagation()}>
+              <SendToQueueButton
+                sourceType="static_ad"
+                sourceId={generation.id}
+                label="Schedule"
+                className="px-2 py-1 text-[11px]"
+              />
+            </span>
           )}
           {onDelete && (
             <button

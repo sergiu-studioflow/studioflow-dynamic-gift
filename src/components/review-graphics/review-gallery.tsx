@@ -8,6 +8,7 @@ import {
 import { useClient } from "@/lib/client-context";
 import { cn } from "@/lib/utils";
 import { Lightbox } from "@/components/review-graphics/lightbox";
+import { SendToQueueButton } from "@/components/posting/send-to-queue-button";
 
 type Asset = {
   id: string;
@@ -335,6 +336,9 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
               <GhostBtn onClick={() => act({ action: "reject" })} disabled={busy} icon={X} label="Reject" danger />
             )}
             <GhostBtn onClick={() => setEditing(true)} disabled={busy} icon={Pencil} label="Edit copy" />
+            {graphic.status === "approved" && (
+              <SendToQueueButton sourceType="review_graphic" sourceId={graphic.id} />
+            )}
           </>
         )}
       </footer>

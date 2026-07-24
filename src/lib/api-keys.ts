@@ -96,4 +96,10 @@ export const CONFIGURABLE_KEYS = [
     label: "Apify",
     description: "Powers the Review Scraping System (Google Maps reviews scraper)",
   },
+  {
+    keyName: "META_SYSTEM_USER_TOKEN",
+    label: "Meta System User Token",
+    description:
+      "Non-expiring Business Manager System User token powering Facebook + Instagram auto-posting (scopes: pages_manage_posts, pages_read_engagement, pages_show_list, instagram_basic, instagram_content_publish, business_management)",
+  },
 ];

@@ -800,3 +800,80 @@ export const reviewScrapeRuns = pgTable("review_scrape_runs", {
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
 });
+
+// =============================================
+// SCHEDULING + AUTO-POSTING (Phase 3.1)
+// =============================================
+
+// One row per brand × platform. A single agency Meta System User token
+// (vault key META_SYSTEM_USER_TOKEN) serves every row — only external ids differ.
+export const socialAccounts = pgTable("social_accounts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  clientId: uuid("client_id").notNull().references(() => brands.id, { onDelete: "cascade" }),
+  platform: text("platform").notNull(), // facebook | instagram | linkedin(later)
+  externalId: text("external_id").notNull(), // FB page_id or IG ig_user_id
+  externalName: text("external_name"),
+  enabled: boolean("enabled").notNull().default(true),
+  health: text("health").notNull().default("unverified"), // unverified | ok | token_invalid | error
+  healthCheckedAt: timestamp("health_checked_at", { withTimezone: true }),
+  healthError: text("health_error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Parent: one creative + one schedule slot. `sourceSnapshot` survives deletion
+// of the source row (all source FKs are SET NULL).
+export const scheduledPosts = pgTable("scheduled_posts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  clientId: uuid("client_id").notNull().references(() => brands.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  sourceType: text("source_type").notNull(), // static_ad | winner | video | review_graphic | manual
+  sourceGenerationId: uuid("source_generation_id").references(() => staticAdGenerations.id, { onDelete: "set null" }),
+  sourceWinnerId: uuid("source_winner_id").references(() => winnersLibrary.id, { onDelete: "set null" }),
+  sourceVideoId: uuid("source_video_id").references(() => videoGenerations.id, { onDelete: "set null" }),
+  sourceReviewGraphicId: uuid("source_review_graphic_id").references(() => reviewGraphics.id, { onDelete: "set null" }),
+  sourceSnapshot: jsonb("source_snapshot").notNull().default({}),
+  mediaType: text("media_type").notNull().default("image"), // image | video
+  mediaUrl: text("media_url").notNull(),
+  mediaWidth: integer("media_width"),
+  mediaHeight: integer("media_height"),
+  // generating | draft | scheduled | publishing | published | partial | failed | cancelled
+  status: text("status").notNull().default("generating"),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }), // stored UTC
+  timezone: text("timezone").notNull().default("Australia/Sydney"), // IANA (DST-safe)
+  approvedBy: uuid("approved_by").references(() => users.id, { onDelete: "set null" }),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  angleTag: text("angle_tag"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Child: one row per platform. FB and IG publish/retry independently.
+export const postTargets = pgTable("post_targets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  postId: uuid("post_id").notNull().references(() => scheduledPosts.id, { onDelete: "cascade" }),
+  clientId: uuid("client_id").notNull().references(() => brands.id, { onDelete: "cascade" }), // denorm
+  socialAccountId: uuid("social_account_id").references(() => socialAccounts.id, { onDelete: "set null" }),
+  platform: text("platform").notNull(), // facebook | instagram
+  placement: text("placement").notNull().default("feed"), // feed | story | reel
+  caption: text("caption"),
+  hashtags: jsonb("hashtags").notNull().default([]), // string[] without '#'
+  captionPayload: jsonb("caption_payload"), // { hook_line, cta, alt_text }
+  mediaOverrideUrl: text("media_override_url"),
+  enabled: boolean("enabled").notNull().default(true),
+  status: text("status").notNull().default("pending"), // pending | publishing | published | failed | skipped
+  attemptCount: integer("attempt_count").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }), // stamped in atomic claim, BEFORE external calls
+  igContainerId: text("ig_container_id"), // IG creation_id — persists across cron runs
+  igPublishStartedAt: timestamp("ig_publish_started_at", { withTimezone: true }), // ambiguity fence
+  externalPostId: text("external_post_id"), // FB post id / IG media id — idempotency proof
+  externalPermalink: text("external_permalink"),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  // token_invalid | media_error | rate_limited | quota_exceeded | ambiguous_stuck | unknown
+  errorCode: text("error_code"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

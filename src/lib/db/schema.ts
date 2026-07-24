@@ -877,3 +877,60 @@ export const postTargets = pgTable("post_targets", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// =============================================
+// MONTHLY PLANNING WORKFLOW (Phase 3.2)
+// =============================================
+
+// Agency-level parent: one month's content plan (may span multiple brands).
+export const monthlyPlans = pgTable("monthly_plans", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  month: date("month").notNull(), // 1st of the target month
+  title: text("title"),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  inputConfig: jsonb("input_config").notNull().default({}), // the guided form
+  // planning | plan_ready | briefing | briefs_ready | producing | scheduled | complete | error
+  status: text("status").notNull().default("planning"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// The month's slots — one row per intended post.
+export const planItems = pgTable("plan_items", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  planId: uuid("plan_id").notNull().references(() => monthlyPlans.id, { onDelete: "cascade" }),
+  clientId: uuid("client_id").notNull().references(() => brands.id, { onDelete: "cascade" }),
+  plannedDate: date("planned_date").notNull(),
+  assetType: text("asset_type").notNull().default("static"), // static | video
+  format: text("format").notNull().default("feed"), // feed | story | reel
+  platforms: jsonb("platforms").notNull().default(["facebook", "instagram"]),
+  angleTag: text("angle_tag"),
+  topic: text("topic"),
+  productId: uuid("product_id").references(() => clientProducts.id, { onDelete: "set null" }),
+  title: text("title"),
+  direction: text("direction"), // Claude's per-slot creative direction
+  // planned | briefing | brief_ready | producing | generated | scheduled | error | skipped
+  status: text("status").notNull().default("planned"),
+  briefId: uuid("brief_id"), // soft link to plan_briefs (avoid circular FK)
+  generationId: uuid("generation_id").references(() => staticAdGenerations.id, { onDelete: "set null" }),
+  scheduledPostId: uuid("scheduled_post_id").references(() => scheduledPosts.id, { onDelete: "set null" }),
+  errorMessage: text("error_message"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// One reviewable/editable brief per slot (static or video).
+export const planBriefs = pgTable("plan_briefs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  planItemId: uuid("plan_item_id").notNull().references(() => planItems.id, { onDelete: "cascade" }),
+  clientId: uuid("client_id").notNull().references(() => brands.id, { onDelete: "cascade" }),
+  briefType: text("brief_type").notNull(), // static | video
+  payload: jsonb("payload").notNull().default({}),
+  status: text("status").notNull().default("generating"), // generating | ready | error
+  edited: boolean("edited").notNull().default(false),
+  aiModel: text("ai_model"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

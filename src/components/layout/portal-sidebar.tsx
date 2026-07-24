@@ -18,7 +18,7 @@ import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ClientSwitcher } from "@/components/layout/client-switcher";
-import { Users, Clapperboard, Target, FileText, Quote, Send } from "lucide-react";
+import { Users, Clapperboard, Target, FileText, Quote, Send, CalendarRange } from "lucide-react";
 import { useClient } from "@/lib/client-context";
 
 // Clients that have systems enabled
@@ -59,6 +59,7 @@ export function PortalSidebar({ brandName, features, userEmail }: PortalSidebarP
     ] : []),
     ...(REVIEW_CLIENTS.includes(clientSlug) ? [{ name: "Review Graphics", href: "/review-graphics", icon: Quote }] : []),
     ...(POSTING_CLIENTS.includes(clientSlug) ? [{ name: "Post Scheduler", href: "/posting", icon: Send }] : []),
+    ...(POSTING_CLIENTS.includes(clientSlug) ? [{ name: "Monthly Planning", href: "/monthly-planning", icon: CalendarRange }] : []),
   ];
 
   async function handleSignOut() {

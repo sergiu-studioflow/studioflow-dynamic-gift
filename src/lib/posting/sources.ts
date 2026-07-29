@@ -7,10 +7,16 @@
  *
  * `review_graphic` is special: it already carries per-platform captions + one
  * asset per format, so it skips Claude caption generation entirely.
+ *
+ * Quality Control: static ads and videos held by the gate cannot enter the queue at all —
+ * the same shape as the pre-existing "review graphic must be approved" rule below.
  */
 
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
+import { isShippable } from "@/lib/qc/gate";
+
+const QC_HELD_ERROR = "Held by Quality Control — approve it in the QC queue before scheduling.";
 
 export type SourceType = "static_ad" | "winner" | "video" | "review_graphic";
 
@@ -60,6 +66,7 @@ async function loadStaticAd(id: string): Promise<LoadedSource> {
   }
   if (!row.imageUrl) throw new SourceError("Static ad has no image");
   if (!row.clientId) throw new SourceError("Static ad has no client");
+  if (!isShippable(row.qcStatus)) throw new SourceError(QC_HELD_ERROR);
   return {
     clientId: row.clientId,
     mediaType: "image",
@@ -112,6 +119,7 @@ async function loadVideo(id: string): Promise<LoadedSource> {
   }
   if (!row.videoUrl) throw new SourceError("Video has no output");
   if (!row.clientId) throw new SourceError("Video has no client");
+  if (!isShippable(row.qcStatus)) throw new SourceError(QC_HELD_ERROR);
   return {
     clientId: row.clientId,
     mediaType: "video",

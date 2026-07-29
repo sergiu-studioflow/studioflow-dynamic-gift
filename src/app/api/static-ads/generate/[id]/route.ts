@@ -12,6 +12,7 @@ import {
 import { uploadToR2, toAccessibleUrl } from "@/lib/r2";
 import { BRAND_SLUG } from "@/lib/static-ads/config";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
+import { enqueueGateReview } from "@/lib/qc/enqueue";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -67,6 +68,16 @@ export async function GET(
           .where(eq(schema.staticAdGenerations.id, generation.id))
           .returning();
         console.log(`[static-ads/r2] Persisted ${generation.id} to R2`);
+        // The asset only just became durable — enqueue now (the eager path skipped it
+        // because a tempfile URL is not gradable).
+        await enqueueGateReview({
+          sourceSystem: "static",
+          sourceId: updated.id,
+          clientId: updated.clientId,
+          assetPath: updated.imageUrl,
+          copyText: updated.adCopy,
+          mode: updated.mode,
+        });
         return NextResponse.json(await withPresignedUrls(updated));
       } catch (err) {
         console.error(`[static-ads/r2] Failed to persist ${generation.id}:`, err);
@@ -124,6 +135,17 @@ export async function GET(
             })
             .where(eq(schema.staticAdGenerations.id, generation.id))
             .returning();
+
+          // Quality Control gate. If the R2 upload above fell back to a tempfile URL,
+          // enqueue no-ops and the lazy-persist branch re-enqueues once R2 lands.
+          await enqueueGateReview({
+            sourceSystem: "static",
+            sourceId: updated.id,
+            clientId: updated.clientId,
+            assetPath: updated.imageUrl,
+            copyText: updated.adCopy,
+            mode: updated.mode,
+          });
 
           return NextResponse.json(await withPresignedUrls(updated));
         }
@@ -303,9 +325,13 @@ async function advanceChainStep(row: GenerationRow): Promise<GenerationRow & { k
     console.error(`[static-ads/r2] Eager persist of source ${source.id} failed:`, uploadErr);
     // Fall back to tempfile URL; the standalone polling branch will retry.
   }
+  // qcStatus is written inline rather than going through enqueueGateReview: this row is a
+  // refined-chain artifact (intermediate / logo-refined). It is hidden from the gallery and
+  // never ships, so grading it would be wasted spend and a source of bogus flags — only the
+  // final `refined` row is gated.
   const [persistedSource] = await db
     .update(schema.staticAdGenerations)
-    .set({ status: "completed", imageUrl: sourceR2Url, updatedAt: new Date() })
+    .set({ status: "completed", imageUrl: sourceR2Url, qcStatus: "skipped", updatedAt: new Date() })
     .where(eq(schema.staticAdGenerations.id, source.id))
     .returning();
 

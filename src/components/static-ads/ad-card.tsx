@@ -5,6 +5,7 @@ import { ImageIcon, Loader2, AlertCircle, Download, Trash2, Trophy, CheckCircle2
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { SendToQueueButton } from "@/components/posting/send-to-queue-button";
+import { QcBadge } from "@/components/qc/review-scorecard";
 
 export type StaticAdGeneration = {
   id: string;
@@ -21,7 +22,14 @@ export type StaticAdGeneration = {
   batchSize?: number | null;
   batchIndex?: number | null;
   sourceGenerationId?: string | null;
+  qcStatus?: string | null;
+  qcReviewId?: string | null;
 };
+
+/** Client-side mirror of src/lib/qc/gate.ts isShippable — keep the two in sync. */
+export function qcShippable(qcStatus?: string | null): boolean {
+  return ["approved", "skipped"].includes(qcStatus ?? "skipped");
+}
 
 type AdCardProps = {
   generation: StaticAdGeneration;
@@ -38,6 +46,9 @@ export function AdCard({ generation, onClick, onDownload, onDelete }: AdCardProp
   const isBatch = !!generation.batchId && (generation.batchSize ?? 1) > 1;
   const batchSize = generation.batchSize ?? 1;
   const isRefined = generation.mode === "refined";
+  // A creative the gate is holding must not offer Download / Winners / Schedule — the
+  // routes 403 anyway, so showing the buttons would only produce a confusing error.
+  const shippable = qcShippable(generation.qcStatus);
 
   // Hide cards whose preview URL is unreachable (legacy cross-client R2 paths,
   // expired tempfiles, etc). The server-side filter catches most; this is the
@@ -102,8 +113,9 @@ export function AdCard({ generation, onClick, onDownload, onDelete }: AdCardProp
         )}
 
         {/* Status badge overlay */}
-        <div className="absolute top-2 right-2">
+        <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
           <StatusBadge status={generation.status} />
+          <QcBadge qcStatus={generation.qcStatus} />
         </div>
 
         {/* Batch chip — shows aspect-ratio when all siblings share one (the
@@ -145,7 +157,7 @@ export function AdCard({ generation, onClick, onDownload, onDelete }: AdCardProp
 
         {/* Action buttons */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          {generation.status === "completed" && generation.imageUrl && (
+          {generation.status === "completed" && generation.imageUrl && shippable && (
             <button
               onClick={handleSaveToWinners}
               disabled={saving || saved}
@@ -160,7 +172,7 @@ export function AdCard({ generation, onClick, onDownload, onDelete }: AdCardProp
               {saved ? "Winner!" : "Winner"}
             </button>
           )}
-          {generation.status === "completed" && generation.imageUrl && onDownload && (
+          {generation.status === "completed" && generation.imageUrl && shippable && onDownload && (
             <button
               onClick={(e) => { e.stopPropagation(); onDownload(generation); }}
               className="flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
@@ -169,7 +181,7 @@ export function AdCard({ generation, onClick, onDownload, onDelete }: AdCardProp
               Download
             </button>
           )}
-          {generation.status === "completed" && generation.imageUrl && (
+          {generation.status === "completed" && generation.imageUrl && shippable && (
             <span onClick={(e) => e.stopPropagation()}>
               <SendToQueueButton
                 sourceType="static_ad"

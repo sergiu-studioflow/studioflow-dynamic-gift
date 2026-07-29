@@ -8,6 +8,8 @@ import { and, eq, gte } from "drizzle-orm";
 import { queuePost } from "@/lib/posting/queue";
 import { resolvePrefs, computeSlots } from "@/lib/posting/slots";
 import { localWallTimeToUtc } from "@/lib/posting/tz";
+import { isShippable } from "@/lib/qc/gate";
+import { QC_HOLD_MESSAGE } from "@/lib/qc/release";
 
 type PlanItem = typeof schema.planItems.$inferSelect;
 
@@ -26,7 +28,11 @@ export async function scheduleGeneratedItem(item: PlanItem, userId: string | nul
   if (!item.generationId) return false;
 
   const [gen] = await db
-    .select({ status: schema.staticAdGenerations.status, imageUrl: schema.staticAdGenerations.imageUrl })
+    .select({
+      status: schema.staticAdGenerations.status,
+      imageUrl: schema.staticAdGenerations.imageUrl,
+      qcStatus: schema.staticAdGenerations.qcStatus,
+    })
     .from(schema.staticAdGenerations)
     .where(eq(schema.staticAdGenerations.id, item.generationId))
     .limit(1);
@@ -40,6 +46,22 @@ export async function scheduleGeneratedItem(item: PlanItem, userId: string | nul
     return false;
   }
   if (gen.status !== "completed" || !gen.imageUrl) return false; // still generating
+
+  // Quality Control gate. This is the ONLY path in the portal that takes a generated
+  // creative to a live Facebook/Instagram publish with no human in the loop, so the gate
+  // is load-bearing here rather than advisory.
+  //   pending  → keep waiting; the next sweep retries once a verdict lands.
+  //   held     → park the item with an explicit message. Approving the creative in the QC
+  //              queue calls releaseHeldPlanItem(), which puts it back to 'generated' so
+  //              the next sweep schedules it at the originally planned date.
+  if (gen.qcStatus === "pending") return false;
+  if (!isShippable(gen.qcStatus)) {
+    await db
+      .update(schema.planItems)
+      .set({ status: "error", errorMessage: QC_HOLD_MESSAGE, updatedAt: new Date() })
+      .where(eq(schema.planItems.id, item.id));
+    return false;
+  }
 
   // 1. Queue the generated ad as a draft post.
   const { postId } = await queuePost({ sourceType: "static_ad", sourceId: item.generationId, userId });

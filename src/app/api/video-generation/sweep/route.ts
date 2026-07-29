@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { pollVideoJob } from "@/lib/video-generation/video-provider";
 import { uploadToR2 } from "@/lib/r2";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
+import { enqueueGateReview } from "@/lib/qc/enqueue";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -58,6 +59,15 @@ export async function GET() {
           .update(schema.videoGenerations)
           .set({ videoUrl: finalVideoUrl, status: "completed", updatedAt: new Date() })
           .where(eq(schema.videoGenerations.id, gen.id));
+
+        // Quality Control gate.
+        await enqueueGateReview({
+          sourceSystem: "video",
+          sourceId: gen.id,
+          clientId: gen.clientId,
+          assetPath: finalVideoUrl,
+          copyText: gen.script,
+        });
         completed++;
       } else if (result.status === "failed") {
         await db

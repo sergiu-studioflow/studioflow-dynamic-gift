@@ -11,6 +11,8 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { QcBadge, QcReviewPanel } from "@/components/qc/review-scorecard";
+import { qcShippable } from "./ad-card";
 import type { StaticAdGeneration } from "./ad-card";
 
 type AdDetailDialogProps = {
@@ -149,11 +151,12 @@ export function AdDetailDialog({ generation, open, onOpenChange, onDelete }: AdD
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <StatusBadge status={generation.status} />
+                <QcBadge qcStatus={generation.qcStatus} />
                 <span className="text-xs text-muted-foreground">{generation.aspectRatio}</span>
               </div>
 
               <div className="flex items-center gap-2">
-                {generation.status === "completed" && generation.imageUrl && (
+                {generation.status === "completed" && generation.imageUrl && qcShippable(generation.qcStatus) && (
                   <button
                     onClick={() => handleDownload(generation)}
                     className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110"
@@ -173,6 +176,11 @@ export function AdDetailDialog({ generation, open, onOpenChange, onDelete }: AdD
                 )}
               </div>
             </div>
+
+            {/* Quality Control report */}
+            {generation.qcReviewId && generation.qcStatus !== "skipped" ? (
+              <QcReviewPanel reviewId={generation.qcReviewId} />
+            ) : null}
 
             {/* Error message */}
             {generation.errorMessage && (

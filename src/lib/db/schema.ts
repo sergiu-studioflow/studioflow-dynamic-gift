@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, timestamp, uuid, jsonb, integer, numeric, date } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, timestamp, uuid, jsonb, integer, numeric, date, index, uniqueIndex } from "drizzle-orm/pg-core";
 
 // =============================================
 // API KEYS (client-configurable, encrypted at rest)
@@ -173,6 +173,11 @@ export const contentIdeas = pgTable("content_ideas", {
   copyDirection: text("copy_direction"),
   sortOrder: integer("sort_order").notNull().default(0),
   status: text("status").notNull().default("new"),
+  // Quality Control gate (0012) — text lane.
+  qcStatus: text("qc_status").notNull().default("pending"), // pending|flagged|approved|rejected|skipped
+  qcReviewId: uuid("qc_review_id"),
+  qcReviewedAt: timestamp("qc_reviewed_at", { withTimezone: true }),
+  qcReviewedBy: uuid("qc_reviewed_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -230,6 +235,11 @@ export const generatedVideoBriefs = pgTable("generated_video_briefs", {
   complianceNotes: text("compliance_notes"),
   aiGenerationNotes: text("ai_generation_notes"),
   status: text("status").notNull().default("pending_review"),
+  // Quality Control gate (0012) — text lane.
+  qcStatus: text("qc_status").notNull().default("pending"), // pending|flagged|approved|rejected|skipped
+  qcReviewId: uuid("qc_review_id"),
+  qcReviewedAt: timestamp("qc_reviewed_at", { withTimezone: true }),
+  qcReviewedBy: uuid("qc_reviewed_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -274,6 +284,11 @@ export const generatedAdCopy = pgTable("generated_ad_copy", {
   complianceNotes: text("compliance_notes"),
   sortOrder: integer("sort_order").notNull().default(0),
   status: text("status").notNull().default("new"),
+  // Quality Control gate (0012) — text lane.
+  qcStatus: text("qc_status").notNull().default("pending"), // pending|flagged|approved|rejected|skipped
+  qcReviewId: uuid("qc_review_id"),
+  qcReviewedAt: timestamp("qc_reviewed_at", { withTimezone: true }),
+  qcReviewedBy: uuid("qc_reviewed_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -354,6 +369,12 @@ export const staticAdGenerations = pgTable("static_ad_generations", {
   batchSize: integer("batch_size").notNull().default(1),
   batchIndex: integer("batch_index").notNull().default(1),
   sourceGenerationId: uuid("source_generation_id"),
+  // Quality Control gate (0012). FKs exist in SQL; kept as plain columns here to avoid a
+  // circular table reference with gate_reviews.
+  qcStatus: text("qc_status").notNull().default("pending"), // pending|flagged|approved|rejected|skipped
+  qcReviewId: uuid("qc_review_id"),
+  qcReviewedAt: timestamp("qc_reviewed_at", { withTimezone: true }),
+  qcReviewedBy: uuid("qc_reviewed_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -463,6 +484,11 @@ export const videoGenerations = pgTable("video_generations", {
   status: text("status").notNull().default("pending"),
   errorMessage: text("error_message"),
   currentStep: integer("current_step").default(0),
+  // Quality Control gate (0012).
+  qcStatus: text("qc_status").notNull().default("pending"), // pending|flagged|approved|rejected|skipped
+  qcReviewId: uuid("qc_review_id"),
+  qcReviewedAt: timestamp("qc_reviewed_at", { withTimezone: true }),
+  qcReviewedBy: uuid("qc_reviewed_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -934,3 +960,75 @@ export const planBriefs = pgTable("plan_briefs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// =============================================
+// QUALITY CONTROL FILTER (0012)
+// Per-client ruleset + one AI grading job per generated output row.
+// =============================================
+
+// ONE row per client — the UNIQUE client_id makes /api/qc/config a clean upsert.
+export const complianceConfig = pgTable("compliance_config", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  clientId: uuid("client_id").notNull().references(() => brands.id, { onDelete: "cascade" }).unique(),
+  bannedPhrasings: jsonb("banned_phrasings").$type<string[]>().notNull().default([]),
+  visualRules: jsonb("visual_rules").$type<string[]>().notNull().default([]),
+  paletteHexes: jsonb("palette_hexes").$type<string[]>().notNull().default([]),
+  productFacts: jsonb("product_facts").$type<string[]>().notNull().default([]),
+  brandSafetyNotes: text("brand_safety_notes"),
+  // Past-winners criterion: a written profile of what this client's winners have in
+  // common, derived from winners_library. ADVISORY — never gates a verdict.
+  winnerProfile: text("winner_profile"),
+  winnerProfileUpdatedAt: timestamp("winner_profile_updated_at", { withTimezone: true }),
+  winnerProfileSourceCount: integer("winner_profile_source_count").notNull().default(0),
+  version: integer("version").notNull().default(1),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type QcCriterion = {
+  key: string;
+  label: string;
+  score: number;
+  pass: boolean;
+  note: string;
+  assessed: boolean;
+  gating: boolean;
+};
+
+export const gateReviews = pgTable(
+  "gate_reviews",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: uuid("client_id").references(() => brands.id, { onDelete: "cascade" }),
+    sourceSystem: text("source_system").notNull().default("static"), // static|video|ad_copy|video_brief|ideation
+    sourceId: uuid("source_id"),
+    assetPath: text("asset_path"), // R2 URL; null for the text lane
+    copyText: text("copy_text"),
+    status: text("status").notNull().default("pending"), // pending|running|complete|failed
+    overallPass: boolean("overall_pass"),
+    criteriaJson: jsonb("criteria_json").$type<QcCriterion[]>().notNull().default([]),
+    reviewer: text("reviewer").notNull().default("ai"), // ai|human
+    overridden: boolean("overridden").notNull().default(false),
+    groundingSource: text("grounding_source"), // flat|none
+    rulesetVersion: integer("ruleset_version"),
+    notes: text("notes"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    errorMessage: text("error_message"),
+    costCents: integer("cost_cents").notNull().default(0),
+    reviewedBy: uuid("reviewed_by").references(() => users.id, { onDelete: "set null" }),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => ({
+    statusIdx: index("gate_reviews_status_idx").on(t.status),
+    sourceIdx: index("gate_reviews_source_idx").on(t.sourceId),
+    clientIdx: index("gate_reviews_client_idx").on(t.clientId),
+    claimIdx: index("gate_reviews_claim_idx").on(t.status, t.createdAt),
+    // Idempotency anchor for enqueueGateReview's onConflictDoNothing.
+    sourceUq: uniqueIndex("gate_reviews_source_uq").on(t.sourceSystem, t.sourceId),
+  })
+);

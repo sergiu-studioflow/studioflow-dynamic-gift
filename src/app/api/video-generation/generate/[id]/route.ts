@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { pollVideoJob } from "@/lib/video-generation/video-provider";
 import { uploadToR2, toAccessibleUrl, r2KeyFromUrl } from "@/lib/r2";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
+import { enqueueGateReview } from "@/lib/qc/enqueue";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,16 @@ export async function GET(
           .set({ videoUrl: r2Url, updatedAt: new Date() })
           .where(eq(schema.videoGenerations.id, id));
 
+        // Now durable — enqueue the Quality Control grade (the eager path skipped it
+        // while the clip was still on a provider tempfile URL).
+        await enqueueGateReview({
+          sourceSystem: "video",
+          sourceId: generation.id,
+          clientId: generation.clientId,
+          assetPath: r2Url,
+          copyText: generation.script,
+        });
+
         const videoPreviewUrl = await toAccessibleUrl(r2Url);
         return NextResponse.json({ ...generation, videoUrl: r2Url, videoPreviewUrl });
       }
@@ -104,6 +115,16 @@ export async function GET(
           .update(schema.videoGenerations)
           .set({ videoUrl: finalVideoUrl, status: "completed", updatedAt: new Date() })
           .where(eq(schema.videoGenerations.id, id));
+
+        // Quality Control gate. No-ops if the R2 upload fell back to a tempfile URL;
+        // the lazy-persist branch above re-enqueues once R2 lands.
+        await enqueueGateReview({
+          sourceSystem: "video",
+          sourceId: generation.id,
+          clientId: generation.clientId,
+          assetPath: finalVideoUrl,
+          copyText: generation.script,
+        });
 
         const videoPreviewUrl = r2KeyFromUrl(finalVideoUrl)
           ? await toAccessibleUrl(finalVideoUrl)

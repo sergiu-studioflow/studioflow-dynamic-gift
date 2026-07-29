@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { AdCard, type StaticAdGeneration } from "./ad-card";
 import { AdDetailDialog } from "./ad-detail-dialog";
 import { useClient } from "@/lib/client-context";
+import { QC_FILTERS, useQcAutoGrade } from "@/components/qc/review-scorecard";
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -21,6 +22,7 @@ type AdGalleryProps = {
 export function AdGallery({ refreshTrigger }: AdGalleryProps) {
   const [generations, setGenerations] = useState<StaticAdGeneration[]>([]);
   const [filter, setFilter] = useState("all");
+  const [qcFilter, setQcFilter] = useState<string>("default");
   const [loading, setLoading] = useState(true);
   const [selectedGeneration, setSelectedGeneration] = useState<StaticAdGeneration | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -31,6 +33,7 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
       const params = new URLSearchParams();
       if (filter !== "all") params.set("status", filter);
       if (clientId) params.set("clientId", clientId);
+      if (qcFilter !== "default") params.set("qc", qcFilter);
       params.set("groupByBatch", "true");
       const url = `/api/static-ads/gallery?${params.toString()}`;
       const res = await fetch(url);
@@ -41,11 +44,18 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
     } finally {
       setLoading(false);
     }
-  }, [filter, clientId]);
+  }, [filter, qcFilter, clientId]);
 
   useEffect(() => {
     fetchGallery();
   }, [fetchGallery, refreshTrigger]);
+
+  // Drive QC grading while any completed ad is still awaiting a verdict, so the badge
+  // and the Download / Winners / Schedule buttons settle within seconds.
+  useQcAutoGrade(
+    generations.some((g) => g.status === "completed" && g.qcStatus === "pending"),
+    fetchGallery
+  );
 
   // Auto-refresh while there are generating items
   useEffect(() => {
@@ -86,6 +96,21 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
               className={cn(
                 "rounded-md px-3 py-1.5 text-xs font-medium transition-all",
                 filter === value
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+          <span className="mx-2 h-4 w-px bg-border" />
+          {QC_FILTERS.map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => setQcFilter(value)}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+                qcFilter === value
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:bg-accent"
               )}

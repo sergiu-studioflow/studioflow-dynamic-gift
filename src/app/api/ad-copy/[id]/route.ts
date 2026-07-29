@@ -2,11 +2,14 @@ import { db, schema } from "@/lib/db";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { eq, asc } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { isShippable, QC_HELD } from "@/lib/qc/gate";
+
+const isHeld = (s?: string | null) => QC_HELD.includes(s ?? "skipped");
 
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: NextRequest,
+  httpReq: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const auth = await requireAuth();
@@ -24,13 +27,28 @@ export async function GET(
     return NextResponse.json({ error: "Request not found" }, { status: 404 });
   }
 
-  const concepts = await db
+  // Quality Control filter. The default view hides pieces the gate is holding, matching
+  // the gallery behaviour — but heldCount is returned so the UI can say how many were
+  // filtered rather than silently showing fewer than were generated. ?qc=all|flagged|ready
+  // switches views.
+  const qc = httpReq.nextUrl.searchParams.get("qc");
+  const allConcepts = await db
     .select()
     .from(schema.generatedAdCopy)
     .where(eq(schema.generatedAdCopy.requestId, id))
     .orderBy(asc(schema.generatedAdCopy.conceptNumber));
 
-  return NextResponse.json({ request, concepts });
+  const heldCount = allConcepts.filter((r) => isHeld(r.qcStatus)).length;
+  const concepts =
+    qc === "all"
+      ? allConcepts
+      : qc === "flagged"
+        ? allConcepts.filter((r) => isHeld(r.qcStatus))
+        : qc === "ready"
+          ? allConcepts.filter((r) => isShippable(r.qcStatus))
+          : allConcepts.filter((r) => !isHeld(r.qcStatus));
+
+  return NextResponse.json({ request, concepts, heldCount });
 }
 
 export async function DELETE(

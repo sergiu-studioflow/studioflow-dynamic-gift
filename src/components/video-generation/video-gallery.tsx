@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Video, Loader2, Clock, RectangleHorizontal } from "lucide-react";
 import { useClient } from "@/lib/client-context";
+import { cn } from "@/lib/utils";
+import { QcBadge, QcReviewPanel, QC_FILTERS, useQcAutoGrade } from "@/components/qc/review-scorecard";
 
 type VideoGeneration = {
   id: string;
@@ -14,6 +16,8 @@ type VideoGeneration = {
   videoUrl: string | null;
   videoPreviewUrl: string | null;
   createdAt: string;
+  qcStatus?: string | null;
+  qcReviewId?: string | null;
 };
 
 export function VideoGallery({ refreshTrigger }: { refreshTrigger: number }) {
@@ -21,23 +25,39 @@ export function VideoGallery({ refreshTrigger }: { refreshTrigger: number }) {
   const [videos, setVideos] = useState<VideoGeneration[]>([]);
   const [loading, setLoading] = useState(true);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [qcFilter, setQcFilter] = useState<string>("default");
+  const [reportFor, setReportFor] = useState<string | null>(null);
+
+  const fetchVideos = useCallback(
+    (showSpinner: boolean) => {
+      if (!clientId) return;
+      if (showSpinner) setLoading(true);
+      const qs = qcFilter !== "default" ? `&qc=${qcFilter}` : "";
+      // Sweep first to catch any completed generations that weren't polled
+      fetch("/api/video-generation/sweep")
+        .catch(() => {}) // non-critical
+        .finally(() => {
+          fetch(`/api/video-generation/gallery?clientId=${clientId}${qs}`)
+            .then((r) => r.json())
+            .then((data) => {
+              if (Array.isArray(data)) setVideos(data);
+            })
+            .catch(console.error)
+            .finally(() => setLoading(false));
+        });
+    },
+    [clientId, qcFilter]
+  );
 
   useEffect(() => {
-    if (!clientId) return;
-    setLoading(true);
-    // Sweep first to catch any completed generations that weren't polled
-    fetch("/api/video-generation/sweep")
-      .catch(() => {}) // non-critical
-      .finally(() => {
-        fetch(`/api/video-generation/gallery?clientId=${clientId}`)
-          .then((r) => r.json())
-          .then((data) => {
-            if (Array.isArray(data)) setVideos(data);
-          })
-          .catch(console.error)
-          .finally(() => setLoading(false));
-      });
-  }, [refreshTrigger, clientId]);
+    fetchVideos(true);
+  }, [refreshTrigger, fetchVideos]);
+
+  // Drive QC grading while any clip is still awaiting a verdict.
+  useQcAutoGrade(
+    videos.some((v) => v.qcStatus === "pending"),
+    () => fetchVideos(false)
+  );
 
   if (loading) {
     return (
@@ -60,7 +80,23 @@ export function VideoGallery({ refreshTrigger }: { refreshTrigger: number }) {
   }
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+    <div className="space-y-4">
+      <div className="flex items-center gap-1">
+        {QC_FILTERS.map(({ value, label }) => (
+          <button
+            key={value}
+            onClick={() => setQcFilter(value)}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+              qcFilter === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
       {videos.map((v) => (
         <div
           key={v.id}
@@ -68,6 +104,11 @@ export function VideoGallery({ refreshTrigger }: { refreshTrigger: number }) {
         >
           {/* Video preview */}
           <div className="relative aspect-[9/16] bg-muted">
+            {v.qcStatus ? (
+              <div className="absolute top-2 right-2 z-10">
+                <QcBadge qcStatus={v.qcStatus} />
+              </div>
+            ) : null}
             {playingId === v.id ? (
               <video
                 src={v.videoPreviewUrl || v.videoUrl || ""}
@@ -124,9 +165,25 @@ export function VideoGallery({ refreshTrigger }: { refreshTrigger: number }) {
                 {v.script}
               </p>
             )}
+            {v.qcReviewId && v.qcStatus && v.qcStatus !== "skipped" ? (
+              <>
+                <button
+                  onClick={() => setReportFor(reportFor === v.id ? null : v.id)}
+                  className="mt-2 text-[10px] font-medium text-primary hover:underline"
+                >
+                  {reportFor === v.id ? "Hide QC report" : "View QC report"}
+                </button>
+                {reportFor === v.id ? (
+                  <div className="mt-2">
+                    <QcReviewPanel reviewId={v.qcReviewId} />
+                  </div>
+                ) : null}
+              </>
+            ) : null}
           </div>
         </div>
       ))}
+      </div>
     </div>
   );
 }

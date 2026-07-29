@@ -1,6 +1,8 @@
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { enqueueTextBatch } from "@/lib/qc/enqueue";
+import { resolveTextClientId } from "@/lib/qc/grade";
 
 export const dynamic = "force-dynamic";
 
@@ -36,9 +38,10 @@ export async function POST(request: NextRequest) {
 
   // Insert concepts if provided
   if (concepts && Array.isArray(concepts)) {
+    const inserted: Array<{ id: string; copyText: string | null }> = [];
     for (let i = 0; i < concepts.length; i++) {
       const c = concepts[i];
-      await db.insert(schema.generatedAdCopy).values({
+      const [row] = await db.insert(schema.generatedAdCopy).values({
         requestId,
         conceptNumber: c.concept_number || i + 1,
         conceptName: c.concept_name || null,
@@ -55,13 +58,23 @@ export async function POST(request: NextRequest) {
         complianceStatus: c.compliance_status || "passed",
         complianceNotes: c.compliance_notes || null,
         sortOrder: i,
-      });
+      }).returning({ id: schema.generatedAdCopy.id });
+      if (row) inserted.push({ id: row.id, copyText: [c.primary_text_medium, c.headlines, c.cta_recommendation].filter(Boolean).join(" ") || null });
     }
 
     await db
       .update(schema.adCopyRequests)
       .set({ status: "complete", updatedAt: new Date() })
       .where(eq(schema.adCopyRequests.id, requestId));
+
+    // Quality Control gate — one review per concept. Text rows carry no client_id, so
+    // the client is resolved from the request's brand name.
+    const [reqRow] = await db
+      .select({ brand: schema.adCopyRequests.brand })
+      .from(schema.adCopyRequests)
+      .where(eq(schema.adCopyRequests.id, requestId))
+      .limit(1);
+    await enqueueTextBatch("ad_copy", inserted, await resolveTextClientId(reqRow?.brand));
   }
 
   await db.insert(schema.activityLog).values({

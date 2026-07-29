@@ -3,6 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { desc, eq, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { toAccessibleUrl, r2KeyFromUrl } from "@/lib/r2";
+import { qcFilterCondition } from "@/lib/qc/gate";
 
 export const dynamic = "force-dynamic";
 
@@ -16,11 +17,15 @@ export async function GET(request: NextRequest) {
   if (isAuthError(auth)) return auth;
 
   const clientId = request.nextUrl.searchParams.get("clientId");
+  const qc = request.nextUrl.searchParams.get("qc");
 
   const conditions = [eq(schema.videoGenerations.status, "completed")];
   if (clientId) {
     conditions.push(eq(schema.videoGenerations.clientId, clientId));
   }
+  // Quality Control filter — default hides held clips, keeps `pending` visible.
+  const qcCondition = qcFilterCondition(qc, schema.videoGenerations.qcStatus);
+  if (qcCondition) conditions.push(qcCondition);
 
   const rows = await db
     .select()

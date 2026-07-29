@@ -5,6 +5,7 @@ import { pollKieJob } from "@/lib/static-ads/kie-ai";
 import { uploadToR2 } from "@/lib/r2";
 import { BRAND_SLUG } from "@/lib/static-ads/config";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
+import { enqueueGateReview } from "@/lib/qc/enqueue";
 
 export type Generation = typeof schema.staticAdGenerations.$inferSelect;
 
@@ -74,6 +75,17 @@ async function persistToR2(gen: Generation, sourceUrl: string): Promise<Generati
     .set({ status: "completed", imageUrl: finalUrl, updatedAt: new Date() })
     .where(eq(schema.staticAdGenerations.id, gen.id))
     .returning();
+
+  // Quality Control gate — fire-and-forget, never throws into generation.
+  await enqueueGateReview({
+    sourceSystem: "static",
+    sourceId: updated.id,
+    clientId: updated.clientId,
+    assetPath: updated.imageUrl,
+    copyText: updated.adCopy,
+    mode: updated.mode,
+  });
+
   return updated;
 }
 

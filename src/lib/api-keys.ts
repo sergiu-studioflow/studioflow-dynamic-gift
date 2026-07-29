@@ -92,6 +92,12 @@ export const CONFIGURABLE_KEYS = [
     description: "Powers Video Generation pipeline (Steps 1, 4, 5) and Static Ad creative analysis",
   },
   {
+    keyName: "GEMINI_API_KEY",
+    label: "Google Gemini",
+    description:
+      "Powers the Quality Control Filter. Required for grading VIDEO (Claude cannot read video); statics and copy fall back to Anthropic when this is unset.",
+  },
+  {
     keyName: "APIFY_TOKEN",
     label: "Apify",
     description: "Powers the Review Scraping System (Google Maps reviews scraper)",

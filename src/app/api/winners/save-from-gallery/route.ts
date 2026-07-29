@@ -7,6 +7,7 @@ import { downloadFromR2, uploadToR2, r2KeyFromUrl } from "@/lib/r2";
 import { v4 as uuid } from "uuid";
 import { r2Prefix } from "@/lib/static-ads/config";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
+import { isShippable } from "@/lib/qc/gate";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,15 @@ export async function POST(req: NextRequest) {
 
   if (generation.status !== "completed" || !generation.imageUrl) {
     return NextResponse.json({ error: "Generation is not completed or has no image" }, { status: 400 });
+  }
+
+  // Hard gate: a held creative must never become a "winner" — winners feed the reference
+  // library, the winner profile, and future generations.
+  if (!isShippable(generation.qcStatus)) {
+    return NextResponse.json(
+      { error: "This creative is held by Quality Control — approve it in the QC queue first." },
+      { status: 403 }
+    );
   }
 
   if (bodyClientId && generation.clientId !== bodyClientId) {

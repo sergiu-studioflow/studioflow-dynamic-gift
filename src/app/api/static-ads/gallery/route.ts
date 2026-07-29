@@ -5,6 +5,7 @@ import * as schema from "@/lib/db/schema";
 import { desc, eq, and, notInArray, isNotNull, sql } from "drizzle-orm";
 import { toAccessibleUrl } from "@/lib/r2";
 import { sweepGeneratingRows } from "@/lib/static-ads/poll-and-persist";
+import { qcFilterCondition } from "@/lib/qc/gate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -18,6 +19,7 @@ export async function GET(req: NextRequest) {
 
     const status = req.nextUrl.searchParams.get("status");
     const clientId = req.nextUrl.searchParams.get("clientId");
+    const qc = req.nextUrl.searchParams.get("qc");
     const groupByBatch = req.nextUrl.searchParams.get("groupByBatch") === "true";
     const limit = Math.min(parseInt(req.nextUrl.searchParams.get("limit") || "100"), 200);
     const offset = parseInt(req.nextUrl.searchParams.get("offset") || "0");
@@ -61,6 +63,12 @@ export async function GET(req: NextRequest) {
         sql`(${schema.staticAdGenerations.imageUrl} LIKE '%r2.dev%' OR ${schema.staticAdGenerations.imageUrl} LIKE '%r2.cloudflarestorage.com%' OR ${schema.staticAdGenerations.imageUrl} LIKE '%studio-flow.co%')`
       );
     }
+
+    // Quality Control filter. Applied BEFORE collapseBatches so a flagged variation can
+    // never become a batch cover. Default view hides held (flagged/rejected) rows but
+    // keeps `pending` visible — the gate holds shipping, it doesn't hide your work.
+    const qcCondition = qcFilterCondition(qc, schema.staticAdGenerations.qcStatus);
+    if (qcCondition) conditions.push(qcCondition);
 
     // When grouping, pull more rows up front so that a batch isn't truncated
     // mid-group (5x is enough headroom for batches up to 5 variations).

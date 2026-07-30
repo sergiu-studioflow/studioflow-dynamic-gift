@@ -7,12 +7,14 @@ import {
   LayoutGrid,
   Pencil,
   Trophy,
+  Images,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AdGallery } from "@/components/static-ads/ad-gallery";
 import { UnifiedGenerator } from "@/components/static-ads/unified-generator";
 import { EditMode } from "@/components/static-ads/edit-mode";
 import { WinnersLibraryManager } from "@/components/settings/winners-library-manager";
+import { ReferenceLibraryManager } from "@/components/settings/reference-library-manager";
 import { useClient } from "@/lib/client-context";
 
 type Product = {
@@ -26,6 +28,7 @@ const TABS = [
   { key: "edit", label: "Edit", icon: Pencil },
   { key: "gallery", label: "Gallery", icon: LayoutGrid },
   { key: "winners", label: "Winners", icon: Trophy },
+  { key: "references", label: "References", icon: Images },
 ];
 
 export default function StaticAdsPage() {
@@ -98,6 +101,12 @@ export default function StaticAdsPage() {
         {activeTab === "winners" && (
           <div className="p-6">
             <WinnersLibraryManager />
+          </div>
+        )}
+
+        {activeTab === "references" && (
+          <div className="p-6">
+            <ReferenceLibraryManager />
           </div>
         )}
       </div>

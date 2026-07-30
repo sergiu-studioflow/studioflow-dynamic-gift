@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -21,12 +22,24 @@ import { ClientSwitcher } from "@/components/layout/client-switcher";
 import { Users, Clapperboard, Target, FileText, Quote, Send, CalendarRange, ShieldCheck } from "lucide-react";
 import { useClient } from "@/lib/client-context";
 
-// Clients that have systems enabled
-const STATIC_AD_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
-const VIDEO_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
-const RESEARCH_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
-const REVIEW_CLIENTS = ["dynamic-gift", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
-const POSTING_CLIENTS = ["dynamic-gift", "the-cap-company", "event-display", "indigenous-promotions", "inflatable-promotions", "lanyards-factory", "pin-factory", "promo-superstore", "the-medal-factory"];
+/**
+ * System visibility is derived from each brand's data via
+ * /api/clients/[slug]/capabilities — see lib/client-capabilities.ts.
+ *
+ * This used to be five hardcoded slug arrays, which meant a brand the client
+ * added themselves stayed invisible to every system until someone edited this
+ * file and redeployed. Onboarding is now self-serve.
+ */
+type Capabilities = {
+  staticAds: boolean;
+  video: boolean;
+  research: boolean;
+  briefs: boolean;
+  reviews: boolean;
+  posting: boolean;
+  monthlyPlanning: boolean;
+  qualityControl: boolean;
+};
 
 const baseNavigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -48,22 +61,35 @@ export function PortalSidebar({ brandName, features, userEmail }: PortalSidebarP
   const router = useRouter();
   const { clientSlug } = useClient();
 
-  // Build navigation dynamically — show systems only for enabled clients
+  const [caps, setCaps] = useState<Capabilities | null>(null);
+
+  useEffect(() => {
+    if (!clientSlug) return;
+    let cancelled = false;
+    // Null until this resolves, so the nav shows only the always-available
+    // systems for a moment rather than flashing items that then vanish.
+    setCaps(null);
+    fetch(`/api/clients/${clientSlug}/capabilities`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: Capabilities | null) => {
+        if (!cancelled && d) setCaps(d);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [clientSlug]);
+
   const navigation = [
     ...baseNavigation,
-    ...(STATIC_AD_CLIENTS.includes(clientSlug) ? [{ name: "Static Ad System", href: "/static-ads", icon: ImageIcon }] : []),
-    ...(VIDEO_CLIENTS.includes(clientSlug) ? [{ name: "Video Generation", href: "/video-generation", icon: Clapperboard }] : []),
-    ...(RESEARCH_CLIENTS.includes(clientSlug) ? [
-      { name: "Competitor Research", href: "/competitor-ads", icon: Target },
-      { name: "Creative Briefs", href: "/research-briefs", icon: FileText },
-    ] : []),
-    ...(REVIEW_CLIENTS.includes(clientSlug) ? [{ name: "Review Graphics", href: "/review-graphics", icon: Quote }] : []),
-    ...(POSTING_CLIENTS.includes(clientSlug) ? [{ name: "Post Scheduler", href: "/posting", icon: Send }] : []),
-    ...(POSTING_CLIENTS.includes(clientSlug) ? [{ name: "Monthly Planning", href: "/monthly-planning", icon: CalendarRange }] : []),
-    // Quality Control gates the generative systems, so show it wherever one of them is on.
-    ...(STATIC_AD_CLIENTS.includes(clientSlug) || VIDEO_CLIENTS.includes(clientSlug)
-      ? [{ name: "Quality Control", href: "/quality-control", icon: ShieldCheck }]
-      : []),
+    ...(caps?.staticAds ? [{ name: "Static Ad System", href: "/static-ads", icon: ImageIcon }] : []),
+    ...(caps?.video ? [{ name: "Video Generation", href: "/video-generation", icon: Clapperboard }] : []),
+    ...(caps?.research ? [{ name: "Competitor Research", href: "/competitor-ads", icon: Target }] : []),
+    ...(caps?.briefs ? [{ name: "Creative Briefs", href: "/research-briefs", icon: FileText }] : []),
+    ...(caps?.reviews ? [{ name: "Review Graphics", href: "/review-graphics", icon: Quote }] : []),
+    ...(caps?.posting ? [{ name: "Post Scheduler", href: "/posting", icon: Send }] : []),
+    ...(caps?.monthlyPlanning ? [{ name: "Monthly Planning", href: "/monthly-planning", icon: CalendarRange }] : []),
+    ...(caps?.qualityControl ? [{ name: "Quality Control", href: "/quality-control", icon: ShieldCheck }] : []),
   ];
 
   async function handleSignOut() {

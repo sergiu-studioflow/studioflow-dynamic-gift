@@ -1035,3 +1035,41 @@ export const gateReviews = pgTable(
     sourceUq: uniqueIndex("gate_reviews_source_uq").on(t.sourceSystem, t.sourceId),
   })
 );
+
+// =============================================
+// STATIC-AD PROMPT BUILDER (0014)
+// Review queue for auto-drafted Agent 1/2 prompts. Drafts live here; the live
+// prompts in client_static_ad_config are written only on human approval.
+// =============================================
+
+export const clientStaticAdPromptJobs = pgTable(
+  "client_static_ad_prompt_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: uuid("client_id").notNull().references(() => brands.id, { onDelete: "cascade" }),
+    // pending | running | awaiting_review | published | rejected | error
+    status: text("status").notNull().default("pending"),
+    // research | vibe | study | author1 | author2 | critique | publish
+    stage: text("stage"),
+    brandType: text("brand_type"), // products | services
+    vertical: text("vertical"),
+    referenceUrls: jsonb("reference_urls").$type<string[]>().notNull().default([]),
+    brandDna: jsonb("brand_dna"),
+    agent1Prompt: text("agent1_prompt"),
+    agent2Prompt: text("agent2_prompt"),
+    criticReport: jsonb("critic_report"),
+    errorMessage: text("error_message"),
+    triggeredBy: text("triggered_by"),
+    /** Build attempts so far — the sweep retries a wedged job once, never twice. */
+    attempts: integer("attempts").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    clientIdx: index("idx_csap_jobs_client").on(t.clientId, t.createdAt),
+    statusIdx: index("idx_csap_jobs_status").on(t.status, t.createdAt),
+  })
+);

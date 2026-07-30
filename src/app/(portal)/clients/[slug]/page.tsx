@@ -3,18 +3,20 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Target, Brain, Package, Loader2 } from "lucide-react";
+import { ArrowLeft, Target, Brain, Package, Sparkles, Loader2 } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
 import { ClientBrandIntelEditor } from "@/components/clients/client-brand-intel-editor";
 import { ClientProductsTable } from "@/components/clients/client-products-table";
+import { ClientStaticAdPrompts } from "@/components/clients/client-static-ad-prompts";
 import type { Client } from "@/lib/types";
 
-type Tab = "overview" | "brand-intel" | "products";
+type Tab = "overview" | "brand-intel" | "products" | "ad-prompts";
 
 const TABS: { key: Tab; label: string; icon: React.ElementType }[] = [
   { key: "overview", label: "Overview", icon: Target },
   { key: "brand-intel", label: "Brand Intel", icon: Brain },
   { key: "products", label: "Products", icon: Package },
+  { key: "ad-prompts", label: "Ad Prompts", icon: Sparkles },
 ];
 
 export default function ClientDetailPage() {
@@ -103,6 +105,7 @@ export default function ClientDetailPage() {
       {tab === "overview" && <OverviewTab client={client} />}
       {tab === "brand-intel" && <ClientBrandIntelEditor clientSlug={slug} />}
       {tab === "products" && <ClientProductsTable clientSlug={slug} />}
+      {tab === "ad-prompts" && <ClientStaticAdPrompts clientSlug={slug} />}
     </div>
   );
 }

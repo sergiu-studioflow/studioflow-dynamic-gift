@@ -8,6 +8,7 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useClient } from "@/lib/client-context";
 
 type ReferenceAd = {
   id: string;
@@ -18,25 +19,31 @@ type ReferenceAd = {
   brand: string | null;
   tags: string | null;
   isActive: boolean;
+  isShared?: boolean;
 };
 
+/** "brand" = this client's own references; "shared" = the agency-wide pool. */
+type Scope = "brand" | "shared";
+
 export function ReferenceLibraryManager() {
+  const { clientId, clientName } = useClient();
   const [refs, setRefs] = useState<ReferenceAd[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [filterIndustry, setFilterIndustry] = useState<string>("");
+  const [scope, setScope] = useState<Scope>("brand");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const fetchRefs = useCallback(async () => {
     setLoading(true);
-    const url = filterIndustry
-      ? `/api/reference-library?industry=${encodeURIComponent(filterIndustry)}`
-      : "/api/reference-library";
-    const res = await fetch(url);
+    const params = new URLSearchParams({ scope });
+    if (clientId) params.set("clientId", clientId);
+    if (filterIndustry) params.set("industry", filterIndustry);
+    const res = await fetch(`/api/reference-library?${params.toString()}`);
     const data = await res.json();
     if (Array.isArray(data)) setRefs(data);
     setLoading(false);
-  }, [filterIndustry]);
+  }, [filterIndustry, clientId, scope]);
 
   useEffect(() => {
     fetchRefs();
@@ -49,7 +56,9 @@ export function ReferenceLibraryManager() {
         const formData = new FormData();
         formData.append("file", file);
         formData.append("name", file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "));
-        formData.append("industry", filterIndustry || "beauty");
+        formData.append("industry", filterIndustry || "Other");
+        // Uploading from the brand tab makes this reference that brand's own.
+        if (scope === "brand" && clientId) formData.append("clientId", clientId);
 
         const res = await fetch("/api/reference-library", {
           method: "POST",
@@ -69,7 +78,7 @@ export function ReferenceLibraryManager() {
         setUploading(false);
       }
     },
-    [filterIndustry, fetchRefs]
+    [filterIndustry, fetchRefs, scope, clientId]
   );
 
   const handleDelete = useCallback(
@@ -90,6 +99,35 @@ export function ReferenceLibraryManager() {
 
   return (
     <div>
+      {/* Scope: this brand's own references vs the shared agency pool. */}
+      <div className="mb-3">
+        <div className="flex items-center gap-1">
+          {(["brand", "shared"] as Scope[]).map((sc) => (
+            <button
+              key={sc}
+              onClick={() => { setScope(sc); setFilterIndustry(""); }}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+                scope === sc ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
+              )}
+            >
+              {sc === "brand" ? `${clientName || "This brand"}'s references` : "Shared pool"}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1.5 text-[11px] text-muted-foreground">
+          {scope === "brand"
+            ? "References here are used only by this brand, and take priority over the shared pool. This is what makes its ads look like its own — a brand with none falls back to the shared pool, which every other brand also draws from."
+            : "The agency-wide pool. Used only when a brand has no winners and no references of its own."}
+        </p>
+        {scope === "brand" && !loading && refs.length === 0 ? (
+          <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-900 dark:text-amber-200">
+            This brand has no references of its own, so its ads are being styled from the shared pool.
+            Upload a few of its best-performing ads to make its output distinct.
+          </p>
+        ) : null}
+      </div>
+
       {/* Industry filter + upload button */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <button

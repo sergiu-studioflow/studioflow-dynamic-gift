@@ -2,6 +2,7 @@ import { db, schema } from "@/lib/db";
 import { uploadToR2 } from "@/lib/r2";
 import { slugify } from "@/lib/utils";
 import { getAppConfig } from "@/lib/config";
+import { buildPlaceholderStaticAdConfig } from "@/lib/static-ads/placeholder-prompts";
 import type { Client } from "@/lib/types";
 
 // Default brand intelligence sections seeded for every new client
@@ -43,8 +44,9 @@ type ProvisionClientInput = {
  * Provisions a new client with all required infrastructure:
  * 1. Creates client record in database
  * 2. Seeds default brand intelligence sections
- * 3. Provisions R2 storage namespace
- * 4. Logs provisioning activity
+ * 3. Seeds working placeholder static-ad prompts
+ * 4. Provisions R2 storage namespace
+ * 5. Logs provisioning activity
  */
 export async function provisionClient(
   input: ProvisionClientInput,
@@ -71,7 +73,9 @@ export async function provisionClient(
       monthlyAdSpend: input.monthlyAdSpend || null,
       status: "Active",
       storagePrefix,
-      settings: {},
+      // Marks the prompts seeded below as generic. The Static-Ad Prompt Builder
+      // flips this to false once brand-specific prompts are published.
+      settings: { staticAdPromptsArePlaceholder: true },
       notes: input.notes || null,
       provisionedAt: new Date(),
     })
@@ -88,7 +92,36 @@ export async function provisionClient(
     }))
   );
 
-  // 3. Provision R2 storage namespace (marker files)
+  // 3. Seed placeholder static-ad prompts.
+  //
+  // agent1_prompt / agent2_prompt are NOT NULL, so without this a brand has no
+  // config row at all and the Static Ad System hard-fails for it — which is
+  // exactly what happened to The Cap Company when the client added it by hand.
+  // These placeholders are brand-neutral but runtime-valid: the brand can
+  // generate on day one, and the Prompt Builder replaces them with researched,
+  // brand-specific prompts once an admin reviews and publishes a build.
+  try {
+    const placeholder = buildPlaceholderStaticAdConfig({
+      brandName: client.brandName,
+      website: client.website,
+      brandColor: client.brandColor,
+    });
+    await db
+      .insert(schema.clientStaticAdConfig)
+      .values({
+        clientId: client.id,
+        agent1Prompt: placeholder.agent1Prompt,
+        agent2Prompt: placeholder.agent2Prompt,
+        brandLogoUrl: client.logoUrl,
+      })
+      // Never clobber prompts a brand already has — re-provisioning an existing
+      // brand must not overwrite published, brand-specific prompts.
+      .onConflictDoNothing({ target: schema.clientStaticAdConfig.clientId });
+  } catch (err) {
+    console.warn("[client-provisioning] placeholder static-ad prompts failed:", err);
+  }
+
+  // 4. Provision R2 storage namespace (marker files)
   try {
     await Promise.all(
       STORAGE_FOLDERS.map((folder) =>
@@ -104,7 +137,7 @@ export async function provisionClient(
     console.warn("[client-provisioning] R2 namespace creation failed:", err);
   }
 
-  // 4. Log provisioning
+  // 5. Log provisioning
   await db.insert(schema.activityLog).values({
     userId: userId ? (userId as unknown as undefined) : undefined, // handle uuid type
     clientId: client.id,

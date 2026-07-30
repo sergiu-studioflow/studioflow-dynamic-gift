@@ -4,7 +4,7 @@
  */
 
 import sharp from "sharp";
-import { downloadFromR2, r2KeyFromUrl } from "@/lib/r2";
+import { downloadFromR2, r2KeyFromUrl, toExternalUrl } from "@/lib/r2";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const MODEL = "claude-sonnet-4-6";
@@ -115,16 +115,35 @@ export async function imageUrlToBase64Block(
   let buffer: Buffer;
   let mediaType: string;
 
+  async function overHttps(target: string) {
+    const res = await fetch(target);
+    if (!res.ok) throw new Error(`Failed to download image (${res.status}): ${target}`);
+    return {
+      buffer: Buffer.from(await res.arrayBuffer()),
+      mediaType: (res.headers.get("content-type") || "image/png").split(";")[0].trim(),
+    };
+  }
+
   if (r2Key) {
-    const result = await downloadFromR2(r2Key);
-    buffer = result.buffer;
-    mediaType = result.contentType.split(";")[0].trim();
+    try {
+      const result = await downloadFromR2(r2Key);
+      buffer = result.buffer;
+      mediaType = result.contentType.split(";")[0].trim();
+    } catch (err) {
+      // The S3 path needs R2_* credentials and a well-formed endpoint. Every
+      // object we address this way is also served on the public r2.dev host, so
+      // fall back to plain HTTPS rather than failing the generation. This is not
+      // only a local-dev convenience: without it, rotating or misconfiguring the
+      // R2 credentials takes the whole static-ad pipeline down at once.
+      console.warn("[static-ads] R2 S3 download failed, falling back to public URL:", (err as Error).message);
+      const viaHttps = await overHttps(toExternalUrl(url));
+      buffer = viaHttps.buffer;
+      mediaType = viaHttps.mediaType;
+    }
   } else {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Failed to download image (${res.status}): ${url}`);
-    buffer = Buffer.from(await res.arrayBuffer());
-    const contentType = res.headers.get("content-type") || "image/png";
-    mediaType = contentType.split(";")[0].trim();
+    const direct = await overHttps(url);
+    buffer = direct.buffer;
+    mediaType = direct.mediaType;
   }
 
   // Auto-resize if too large for Claude

@@ -1,5 +1,5 @@
 /**
- * One-shot logo uploader for Dynamic Gift's 8 sub-brands.
+ * Logo uploader for Dynamic Gift's sub-brands.
  * Uploads each PNG from temp-logos/ to R2 under canonical paths and
  * UPDATEs client_static_ad_config with the resulting public URLs.
  */
@@ -28,6 +28,12 @@ const FILE_TO_SLUG: Record<string, string> = {
   "promo-superstore-logo-white": "promo-superstore",
   "medal-factory-logo": "the-medal-factory",
   "medal-factory-logo-white": "the-medal-factory",
+  // Added by the client after the original 8. Drop the-cap-company-logo.png (and
+  // optionally -white) into temp-logos/ and re-run. NOTE: this UPDATEs
+  // client_static_ad_config, so run it AFTER the brand's prompts are published —
+  // without that row the update silently matches nothing.
+  "the-cap-company-logo": "the-cap-company",
+  "the-cap-company-logo-white": "the-cap-company",
 };
 
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID!;

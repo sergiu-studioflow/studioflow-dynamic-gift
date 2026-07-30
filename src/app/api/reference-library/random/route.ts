@@ -1,36 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
-import { downloadFromR2 } from "@/lib/r2";
+import { pickReferenceForClient } from "@/lib/static-ads/reference-selection";
 
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/reference-library/random?industry=beauty
- * Return one random active reference from the shared R2 manifest.
+ * GET /api/reference-library/random?clientId=
+ *
+ * One random reference for a brand. Resolves the brand's own references first
+ * and only falls back to the shared pool (narrowed by the client's allowed
+ * industries) when it has none — see lib/static-ads/reference-selection.ts.
+ *
+ * `isShared` / `tier` are returned so the generator can tell the user their
+ * brand is still running on shared creative rather than failing silently.
+ *
+ * Reads the database. It previously read an R2 manifest while every write went
+ * to Postgres, which made uploads invisible and per-brand scoping impossible.
  */
 export async function GET(req: NextRequest) {
   const authResult = await requireAuth();
   if (isAuthError(authResult)) return authResult;
 
-  const industry = req.nextUrl.searchParams.get("industry");
+  const clientId = req.nextUrl.searchParams.get("clientId");
 
-  let items: Record<string, unknown>[] = [];
-  try {
-    const { buffer } = await downloadFromR2("shared/reference-ad-library/manifest.json");
-    const manifest = JSON.parse(buffer.toString("utf-8"));
-    items = (manifest.items || []).filter((item: Record<string, unknown>) => item.isActive !== false);
-  } catch {
+  // Winners have their own picker (the "Winners" reference mode), so exclude
+  // them here — otherwise the Auto mode would silently serve winners too.
+  const picked = await pickReferenceForClient(clientId, { includeWinners: false });
+  if (!picked) {
     return NextResponse.json({ error: "No references found" }, { status: 404 });
   }
 
-  if (industry) {
-    items = items.filter((item) => item.industry === industry);
-  }
-
-  if (items.length === 0) {
-    return NextResponse.json({ error: "No references found" }, { status: 404 });
-  }
-
-  const ref = items[Math.floor(Math.random() * items.length)];
-  return NextResponse.json({ ...ref, previewUrl: ref.imageUrl });
+  return NextResponse.json({
+    name: picked.name,
+    imageUrl: picked.imageUrl,
+    previewUrl: picked.imageUrl,
+    tier: picked.tier,
+    isShared: picked.isShared,
+  });
 }

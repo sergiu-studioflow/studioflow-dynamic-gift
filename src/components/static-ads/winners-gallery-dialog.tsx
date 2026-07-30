@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Loader2, Trophy, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useClient } from "@/lib/client-context";
 
 type WinnerItem = {
   id: string;
@@ -20,19 +21,20 @@ type WinnersGalleryDialogProps = {
 };
 
 export function WinnersGalleryDialog({ open, onClose, onSelect }: WinnersGalleryDialogProps) {
+  const { clientId } = useClient();
   const [winners, setWinners] = useState<WinnerItem[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (open) {
       setLoading(true);
-      fetch("/api/winners")
+      fetch(`/api/winners${clientId ? `?clientId=${clientId}` : ""}`)
         .then((r) => r.json())
         .then((data) => { if (Array.isArray(data)) setWinners(data); })
         .catch(() => {})
         .finally(() => setLoading(false));
     }
-  }, [open]);
+  }, [open, clientId]);
 
   const handleSelect = (w: WinnerItem) => {
     onSelect({ id: w.id, name: w.name, imageUrl: w.imageUrl, previewUrl: w.previewUrl });

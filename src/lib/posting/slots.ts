@@ -23,20 +23,68 @@ export const DEFAULT_PREFS: PostingPrefs = {
   maxPerDay: 1,
 };
 
-/** Merge stored (partial) prefs from brands.settings.posting over the defaults. */
+/** True if the string is an IANA zone this runtime can actually resolve. */
+export function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-AU", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Normalise a slot time to zero-padded "HH:MM".
+ *
+ * computeSlots builds its occupancy keys zero-padded, so an un-padded "9:00"
+ * would never match an existing "09:00" — the same wall-clock minute could be
+ * booked twice. Returns null for anything that isn't a real time of day.
+ */
+function normalizeSlotTime(s: unknown): string | null {
+  if (typeof s !== "string") return null;
+  const m = s.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+/**
+ * Merge stored (partial) prefs from brands.settings.posting over the defaults.
+ *
+ * Every branch re-falls-back to the default when validation empties a list.
+ * The old code checked `.length` BEFORE filtering, so a value like
+ * `daysOfWeek: [7]` or `slotTimes: ["9am"]` survived the guard, filtered to
+ * `[]`, and silently dropped the brand out of scheduling and monthly plans.
+ */
 export function resolvePrefs(raw: unknown): PostingPrefs {
   const p = (raw && typeof raw === "object" ? raw : {}) as Partial<PostingPrefs>;
-  const slotTimes = Array.isArray(p.slotTimes) && p.slotTimes.length
-    ? p.slotTimes.filter((s) => /^\d{1,2}:\d{2}$/.test(s)).sort()
-    : DEFAULT_PREFS.slotTimes;
-  const daysOfWeek = Array.isArray(p.daysOfWeek) && p.daysOfWeek.length
-    ? p.daysOfWeek.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
-    : DEFAULT_PREFS.daysOfWeek;
+
+  const slotTimes = Array.isArray(p.slotTimes)
+    ? Array.from(new Set(p.slotTimes.map(normalizeSlotTime).filter((s): s is string => !!s)))
+        // Sort chronologically. A lexicographic sort put "9:00" after "17:00".
+        .sort((a, b) => a.localeCompare(b))
+    : [];
+
+  const daysOfWeek = Array.isArray(p.daysOfWeek)
+    ? Array.from(new Set(p.daysOfWeek.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))).sort(
+        (a, b) => a - b
+      )
+    : [];
+
+  const tz = typeof p.timezone === "string" ? p.timezone.trim() : "";
+
   return {
-    timezone: typeof p.timezone === "string" && p.timezone ? p.timezone : DEFAULT_PREFS.timezone,
-    slotTimes,
-    daysOfWeek,
-    maxPerDay: Number.isInteger(p.maxPerDay) && (p.maxPerDay as number) > 0 ? (p.maxPerDay as number) : DEFAULT_PREFS.maxPerDay,
+    // An unresolvable zone would throw a RangeError deep inside Intl at
+    // schedule time; fall back rather than 500 the whole run.
+    timezone: tz && isValidTimeZone(tz) ? tz : DEFAULT_PREFS.timezone,
+    slotTimes: slotTimes.length ? slotTimes : DEFAULT_PREFS.slotTimes,
+    daysOfWeek: daysOfWeek.length ? daysOfWeek : DEFAULT_PREFS.daysOfWeek,
+    maxPerDay:
+      Number.isInteger(p.maxPerDay) && (p.maxPerDay as number) > 0
+        ? (p.maxPerDay as number)
+        : DEFAULT_PREFS.maxPerDay,
   };
 }
 

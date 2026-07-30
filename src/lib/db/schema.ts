@@ -385,6 +385,9 @@ export const staticAdGenerations = pgTable("static_ad_generations", {
 
 export const referenceAdLibrary = pgTable("reference_ad_library", {
   id: uuid("id").primaryKey().defaultRandom(),
+  // NULL = shared pool (any brand may fall back to it); set = that brand's own
+  // curated reference. Added in 0013 — before that the library was fully global.
+  clientId: uuid("client_id").references(() => brands.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   imageUrl: text("image_url").notNull(),
   industry: text("industry").notNull().default("beauty"),

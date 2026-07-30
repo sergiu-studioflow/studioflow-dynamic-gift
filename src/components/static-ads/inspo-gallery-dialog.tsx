@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Loader2, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useClient } from "@/lib/client-context";
 
 type ReferenceItem = {
   id: string;
@@ -21,49 +22,33 @@ type InspoGalleryDialogProps = {
 };
 
 export function InspoGalleryDialog({ open, onClose, onSelect }: InspoGalleryDialogProps) {
-  const [refs, setRefs] = useState<ReferenceItem[]>([]);
+  const { clientId } = useClient();
   const [loading, setLoading] = useState(false);
   const [selectedIndustry, setSelectedIndustry] = useState<string | null>(null);
+
+  // One client-scoped fetch; the industry pills filter the result client-side.
+  // (This used to fire two requests — a filtered one and an unfiltered one — and
+  // then filter client-side anyway.)
+  const [allRefs, setAllRefs] = useState<ReferenceItem[]>([]);
 
   const fetchRefs = useCallback(async () => {
     setLoading(true);
     try {
-      const url = selectedIndustry
-        ? `/api/reference-library?industry=${encodeURIComponent(selectedIndustry)}`
-        : "/api/reference-library";
-      const res = await fetch(url);
+      const res = await fetch(`/api/reference-library${clientId ? `?clientId=${clientId}` : ""}`);
       if (res.ok) {
         const data = await res.json();
-        setRefs(data);
+        setAllRefs(data);
       }
     } catch {
       // ignore
     } finally {
       setLoading(false);
     }
-  }, [selectedIndustry]);
+  }, [clientId]);
 
   useEffect(() => {
     if (open) fetchRefs();
   }, [open, fetchRefs]);
-
-  // Extract unique industries for filter pills
-  const industries = [...new Set(refs.map((r) => r.industry))].sort();
-  // If we have a filter and fetched filtered results, show all industries from unfiltered
-  // For simplicity, fetch all first time, then filter client-side
-  const [allRefs, setAllRefs] = useState<ReferenceItem[]>([]);
-
-  useEffect(() => {
-    if (open && allRefs.length === 0) {
-      fetch("/api/reference-library")
-        .then((r) => r.json())
-        .then((data) => {
-          setAllRefs(data);
-          setRefs(data);
-        })
-        .catch(() => {});
-    }
-  }, [open, allRefs.length]);
 
   // Client-side filtering
   const allIndustries = [...new Set(allRefs.map((r) => r.industry))].sort();

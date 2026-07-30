@@ -64,6 +64,10 @@ export async function POST(req: NextRequest) {
       .insert(schema.staticAdGenerations)
       .values({
         userId: portalUser.id,
+        // Inherit the source ad's client. Without this an edited ad has no
+        // clientId at all: it falls out of every gallery/client filter and out
+        // of QC's per-client grounding.
+        clientId: original.clientId,
         productId: original.productId,
         productName: original.productName,
         styleName: "Edit",

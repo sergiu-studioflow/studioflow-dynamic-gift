@@ -91,7 +91,8 @@ export async function scheduleGeneratedItem(item: PlanItem, userId: string | nul
   }
   await db
     .update(schema.scheduledPosts)
-    .set({ status: "scheduled", scheduledAt, approvedBy: userId, approvedAt: new Date(), updatedAt: new Date() })
+    // Re-stamp the timezone in case prefs changed between queueing and scheduling.
+    .set({ status: "scheduled", scheduledAt, timezone: prefs.timezone, approvedBy: userId, approvedAt: new Date(), updatedAt: new Date() })
     .where(eq(schema.scheduledPosts.id, postId));
 
   // 4. Link + advance the plan item.

@@ -11,13 +11,14 @@ export const dynamic = "force-dynamic";
  * DELETE /api/winners/[id]
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const authResult = await requireAuth();
   if (isAuthError(authResult)) return authResult;
 
   const { id } = await params;
+  const clientId = req.nextUrl.searchParams.get("clientId");
 
   const [winner] = await db
     .select()
@@ -27,6 +28,11 @@ export async function DELETE(
 
   if (!winner) {
     return NextResponse.json({ error: "Winner not found" }, { status: 404 });
+  }
+
+  // IDOR guard: a winner may only be deleted from within its own client.
+  if (clientId && winner.clientId && winner.clientId !== clientId) {
+    return NextResponse.json({ error: "Winner belongs to a different client" }, { status: 403 });
   }
 
   // Delete from R2

@@ -13,6 +13,7 @@ import { loadSource, type SourceType } from "./sources";
 import { probeMedia, routePlacement, makeIgVariant } from "./media";
 import { generateOrganicCaptions } from "./captions";
 import { ALL_PLATFORM_KEYS, isPlatformKey, type PlatformKey } from "./platforms";
+import { resolvePrefs } from "./slots";
 
 export type QueueInput = {
   sourceType: SourceType;
@@ -46,6 +47,14 @@ export async function queuePost(input: QueueInput): Promise<QueueResult> {
   const connected = platforms.filter((p) => accountByPlatform.get(p)?.enabled);
   const activePlatforms = connected.length ? connected : platforms;
 
+  // The brand's own posting timezone, for the display stamp below.
+  const [brand] = await db
+    .select({ settings: schema.brands.settings })
+    .from(schema.brands)
+    .where(eq(schema.brands.id, src.clientId))
+    .limit(1);
+  const prefs = resolvePrefs((brand?.settings as Record<string, unknown> | undefined)?.posting);
+
   const [parent] = await db
     .insert(schema.scheduledPosts)
     .values({
@@ -58,6 +67,10 @@ export async function queuePost(input: QueueInput): Promise<QueueResult> {
       mediaUrl: src.mediaUrl,
       mediaWidth: probed.width,
       mediaHeight: probed.height,
+      // Stamp the brand's own timezone. The column defaults to Australia/Sydney
+      // and nothing used to write it, so every non-Sydney brand's posts were
+      // computed correctly in UTC but DISPLAYED in Sydney time in the queue.
+      timezone: prefs.timezone,
       status: "generating",
     })
     .returning();

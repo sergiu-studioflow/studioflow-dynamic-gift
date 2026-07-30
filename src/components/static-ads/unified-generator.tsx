@@ -166,11 +166,13 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
     return () => stepTimersRef.current.forEach(clearTimeout);
   }, []);
 
-  // Fetch a random reference from the library
+  // Fetch a random reference from the library. Scoped to the active client so a
+  // brand draws on its own references (with the shared pool as fallback) rather
+  // than a random ad from every other brand's pool.
   const fetchRandomRef = useCallback(async () => {
     setAutoLoading(true);
     try {
-      const res = await fetch("/api/reference-library/random");
+      const res = await fetch(`/api/reference-library/random${clientId ? `?clientId=${clientId}` : ""}`);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         console.error("Failed to fetch random ref:", data.error);
@@ -189,19 +191,26 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
     } finally {
       setAutoLoading(false);
     }
-  }, []);
+  }, [clientId]);
 
   // Fetch a random winner from the winners library
   const fetchRandomWinner = useCallback(async () => {
     setWinnerLoading(true);
     try {
-      const res = await fetch("/api/winners/random");
+      const res = await fetch(`/api/winners/random${clientId ? `?clientId=${clientId}` : ""}`);
       if (!res.ok) { setWinnerRef(null); return; }
       const data = await res.json();
       setWinnerRef({ id: data.id, name: data.name, imageUrl: data.imageUrl, previewUrl: data.previewUrl });
     } catch { setWinnerRef(null); }
     finally { setWinnerLoading(false); }
   }, []);
+
+  // Drop a reference belonging to the previous brand as soon as the client changes,
+  // so the auto-fetch below re-runs instead of keeping another brand's ad selected.
+  useEffect(() => {
+    setAutoRef(null);
+    setWinnerRef(null);
+  }, [clientId]);
 
   // Auto-fetch when switching modes
   useEffect(() => {

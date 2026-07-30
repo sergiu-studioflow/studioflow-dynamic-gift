@@ -34,6 +34,11 @@ export async function POST(req: NextRequest) {
   const schedulable = posts.filter((p) => ["draft", "scheduled"].includes(p.status));
   if (!schedulable.length) return NextResponse.json({ error: "No schedulable posts in selection" }, { status: 400 });
 
+  // The brand's prefs are needed by BOTH branches: auto mode computes slots from
+  // them, and both stamp scheduled_posts.timezone so the queue renders local time.
+  const [brand] = await db.select({ settings: schema.brands.settings }).from(schema.brands).where(eq(schema.brands.id, clientId)).limit(1);
+  const prefs = resolvePrefs((brand?.settings as Record<string, unknown>)?.posting);
+
   // Compute the target time(s).
   let times: Date[];
   if (mode === "manual") {
@@ -43,8 +48,6 @@ export async function POST(req: NextRequest) {
     }
     times = schedulable.map(() => at);
   } else {
-    const [brand] = await db.select({ settings: schema.brands.settings }).from(schema.brands).where(eq(schema.brands.id, clientId)).limit(1);
-    const prefs = resolvePrefs((brand?.settings as Record<string, unknown>)?.posting);
     const occupied = await db
       .select({ scheduledAt: schema.scheduledPosts.scheduledAt })
       .from(schema.scheduledPosts)
@@ -72,7 +75,7 @@ export async function POST(req: NextRequest) {
     }
     await db
       .update(schema.scheduledPosts)
-      .set({ status: "scheduled", scheduledAt: at, approvedBy: auth.portalUser.id, approvedAt: new Date(), updatedAt: new Date() })
+      .set({ status: "scheduled", scheduledAt: at, timezone: prefs.timezone, approvedBy: auth.portalUser.id, approvedAt: new Date(), updatedAt: new Date() })
       .where(eq(schema.scheduledPosts.id, p.id));
     scheduled.push(p.id);
   }

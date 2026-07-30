@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { resolvePrefs, type PostingPrefs } from "@/lib/posting/slots";
+import { resolvePrefs, isValidTimeZone, type PostingPrefs } from "@/lib/posting/slots";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +26,16 @@ export async function PUT(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const { clientId, prefs } = body;
   if (!clientId) return NextResponse.json({ error: "clientId required" }, { status: 400 });
+
+  // Reject a bad timezone here rather than silently falling back to Sydney —
+  // otherwise a typo looks saved but every post lands in the wrong zone.
+  const tz = typeof prefs?.timezone === "string" ? prefs.timezone.trim() : "";
+  if (tz && !isValidTimeZone(tz)) {
+    return NextResponse.json(
+      { error: `"${tz}" is not a valid IANA timezone (e.g. Australia/Sydney, Australia/Perth).` },
+      { status: 400 }
+    );
+  }
 
   const clean: PostingPrefs = resolvePrefs(prefs);
   const [brand] = await db.select({ settings: schema.brands.settings }).from(schema.brands).where(eq(schema.brands.id, clientId)).limit(1);

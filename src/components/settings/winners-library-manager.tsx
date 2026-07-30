@@ -57,11 +57,14 @@ export function WinnersLibraryManager() {
   const handleDelete = useCallback(async (id: string) => {
     setDeletingId(id);
     try {
-      const res = await fetch(`/api/winners/${id}`, { method: "DELETE" });
+      const res = await fetch(
+        `/api/winners/${id}${clientId ? `?clientId=${clientId}` : ""}`,
+        { method: "DELETE" }
+      );
       if (res.ok) setWinners((prev) => prev.filter((w) => w.id !== id));
     } catch { /* ignore */ }
     finally { setDeletingId(null); }
-  }, []);
+  }, [clientId]);
 
   return (
     <div>

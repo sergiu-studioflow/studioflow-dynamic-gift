@@ -14,6 +14,7 @@
 import { db, schema } from "@/lib/db";
 import { and, eq, sql } from "drizzle-orm";
 import { analyzeReferenceAd, generateCustomPrompt } from "@/lib/static-ads/custom-pipeline";
+import { pickReferenceForClient } from "@/lib/static-ads/reference-selection";
 import { submitKieJob } from "@/lib/static-ads/kie-ai";
 
 type PlanItem = typeof schema.planItems.$inferSelect;
@@ -23,23 +24,20 @@ function ratioForFormat(format: string): string {
   return format === "story" || format === "reel" ? "9:16" : "4:5";
 }
 
-/** Pick a reference image: a random active winner, else a random reference-library ad. */
+/**
+ * Pick a reference image for this brand.
+ *
+ * Previously the fallback branch was unscoped — a random row from the whole
+ * global library, so every brand without winners (8 of 9) got the same
+ * cross-industry pool. Now resolves per brand: winners → the brand's own
+ * references → the shared pool filtered by allowed industries → shared.
+ */
 async function pickReference(clientId: string): Promise<string | null> {
-  const [winner] = await db
-    .select({ imageUrl: schema.winnersLibrary.imageUrl })
-    .from(schema.winnersLibrary)
-    .where(and(eq(schema.winnersLibrary.clientId, clientId), eq(schema.winnersLibrary.isActive, true)))
-    .orderBy(sql`random()`)
-    .limit(1);
-  if (winner?.imageUrl) return winner.imageUrl;
-
-  const [ref] = await db
-    .select({ imageUrl: schema.referenceAdLibrary.imageUrl })
-    .from(schema.referenceAdLibrary)
-    .where(eq(schema.referenceAdLibrary.isActive, true))
-    .orderBy(sql`random()`)
-    .limit(1);
-  return ref?.imageUrl ?? null;
+  const picked = await pickReferenceForClient(clientId);
+  if (picked?.isShared) {
+    console.log(`[monthly-planning] client ${clientId} has no own references — using the ${picked.tier} pool`);
+  }
+  return picked?.imageUrl ?? null;
 }
 
 /**

@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import { TextEditorBubbles, type EditableTextElement } from "./text-editor-bubbles";
 import { StepProgress, type Step } from "./step-progress";
+import { useClient } from "@/lib/client-context";
 
 type Generation = {
   id: string;
@@ -53,6 +54,7 @@ function buildApplySteps(currentStep: number): Step[] {
 }
 
 export function EditMode({ onGalleryRefresh, initialGenerationId, onInitialHandled }: EditModeProps) {
+  const { clientId } = useClient();
   const [state, setState] = useState<EditState>({ phase: "selecting" });
   const [generations, setGenerations] = useState<Generation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -62,14 +64,14 @@ export function EditMode({ onGalleryRefresh, initialGenerationId, onInitialHandl
   // Load completed generations
   useEffect(() => {
     setLoadingGallery(true);
-    fetch("/api/static-ads/gallery?status=completed")
+    fetch(`/api/static-ads/gallery?status=completed${clientId ? `&clientId=${clientId}` : ""}`)
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data)) setGenerations(data);
       })
       .catch(console.error)
       .finally(() => setLoadingGallery(false));
-  }, []);
+  }, [clientId]);
 
   useEffect(() => {
     return () => stepTimersRef.current.forEach(clearTimeout);

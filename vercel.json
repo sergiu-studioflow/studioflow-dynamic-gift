@@ -6,23 +6,23 @@
     },
     {
       "path": "/api/cron/review-sweep",
-      "schedule": "*/30 * * * *"
+      "schedule": "*/30 7-22 * * *"
     },
     {
       "path": "/api/cron/publish-posts",
-      "schedule": "*/30 * * * *"
+      "schedule": "*/30 7-22 * * *"
     },
     {
       "path": "/api/cron/monthly-planning-sweep",
-      "schedule": "*/30 * * * *"
+      "schedule": "*/30 7-22 * * *"
     },
     {
       "path": "/api/cron/qc",
-      "schedule": "0 * * * *"
+      "schedule": "0 7-22 * * *"
     },
     {
       "path": "/api/cron/sweep-static-ad-prompts",
-      "schedule": "0 * * * *"
+      "schedule": "0 7-22 * * *"
     }
   ]
 }

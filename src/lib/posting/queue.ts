@@ -20,6 +20,9 @@ export type QueueInput = {
   sourceId: string;
   userId: string | null;
   platforms?: string[]; // defaults to all (facebook + instagram)
+  /** A core angle the creative was already built around (a monthly-plan slot). Captions lead
+   *  with it; without one they take the next angle in the brand's rotation. */
+  angleTag?: string | null;
 };
 
 export type QueueResult = { postId: string; status: string; clientId: string };
@@ -153,6 +156,7 @@ export async function queuePost(input: QueueInput): Promise<QueueResult> {
         clientId: src.clientId,
         sourceContext,
         platforms: activePlatforms,
+        angleTag: input.angleTag,
       });
       angleTag = tag;
       for (const platform of activePlatforms) {

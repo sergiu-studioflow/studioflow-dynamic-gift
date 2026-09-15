@@ -99,6 +99,8 @@ async function draftPostFor(item: PlanItem, userId: string | null): Promise<{ po
     sourceId: item.generationId!,
     userId,
     platforms: Array.isArray(item.platforms) ? (item.platforms as string[]) : undefined,
+    // The ad was briefed on this angle — the caption must say the same thing.
+    angleTag: item.angleTag,
   });
   await db
     .update(schema.planItems)

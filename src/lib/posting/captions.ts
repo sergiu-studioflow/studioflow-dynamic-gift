@@ -151,10 +151,13 @@ export async function generateOrganicCaptions(input: {
   clientId: string;
   sourceContext: string;
   platforms: PlatformKey[];
+  /** The angle the creative was built around; the rotation is only used without one. */
+  angleTag?: string | null;
 }): Promise<{ captions: PlatformCaptions; angleTag: string }> {
+  const planned = CORE_ANGLES.find((a) => a.tag === input.angleTag);
   const [{ brandName, brandContext, usps }, angle, apiKey] = await Promise.all([
     fetchBrandGrounding(input.clientId),
-    nextAngle(input.clientId),
+    planned ?? nextAngle(input.clientId),
     getApiKey("ANTHROPIC_API_KEY"),
   ]);
 

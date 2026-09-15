@@ -75,6 +75,12 @@ export async function DELETE(
       }
     }
 
+    // gate_reviews has no FK to the source rows: drop this ad's review first, or it sits in
+    // Quality Control failing to grade an ad that no longer exists.
+    await db
+      .delete(schema.gateReviews)
+      .where(and(eq(schema.gateReviews.sourceSystem, "static"), eq(schema.gateReviews.sourceId, id)));
+
     await db
       .delete(schema.staticAdGenerations)
       .where(eq(schema.staticAdGenerations.id, id));

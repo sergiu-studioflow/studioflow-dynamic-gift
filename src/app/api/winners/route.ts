@@ -66,17 +66,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Only PNG, JPEG, and WebP images allowed" }, { status: 400 });
   }
 
-  const ext = file.name.split(".").pop() || "jpeg";
-  const clientPrefix = clientId ? await getClientStoragePrefix(clientId) : null;
-  const basePrefix = clientPrefix ? `${clientPrefix}/winners-library` : r2Prefix("winners-library");
-  const key = `${basePrefix}/${uuid()}.${ext}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const imageUrl = await uploadToR2(key, buffer, file.type);
+  try {
+    const ext = file.name.split(".").pop() || "jpeg";
+    const clientPrefix = clientId ? await getClientStoragePrefix(clientId) : null;
+    const basePrefix = clientPrefix ? `${clientPrefix}/winners-library` : r2Prefix("winners-library");
+    const key = `${basePrefix}/${uuid()}.${ext}`;
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const imageUrl = await uploadToR2(key, buffer, file.type);
 
-  const [winner] = await db
-    .insert(schema.winnersLibrary)
-    .values({ userId: portalUser.id, clientId, name, imageUrl, tags, notes, productName })
-    .returning();
+    const [winner] = await db
+      .insert(schema.winnersLibrary)
+      .values({ userId: portalUser.id, clientId, name, imageUrl, tags, notes, productName })
+      .returning();
 
-  return NextResponse.json(winner, { status: 201 });
+    return NextResponse.json(winner, { status: 201 });
+  } catch (err) {
+    console.error("[winners/POST]", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Upload failed" },
+      { status: 500 }
+    );
+  }
 }

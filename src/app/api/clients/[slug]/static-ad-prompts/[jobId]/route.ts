@@ -2,7 +2,8 @@
  * Poll one build job, and approve/reject it.
  *
  * Approving is the ONLY sanctioned path that writes a brand's FIXED Agent 1/2
- * prompts — a human reads both drafts and the critic report first.
+ * prompts — a human reads both drafts and the critic report first. The prompts it
+ * replaces are snapshotted first (see publishJob), so an approve can be undone.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
   if (action === "reject") {
     const ok = await rejectJob(clientId, jobId);
-    if (!ok) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+    if (!ok) return NextResponse.json({ error: "No draft awaiting review with that id" }, { status: 404 });
     return NextResponse.json({ ok: true, status: "rejected" });
   }
   return NextResponse.json({ error: 'action must be "approve" or "reject"' }, { status: 400 });

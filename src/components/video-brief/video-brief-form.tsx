@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { BrandSelect } from "@/components/shared/brand-select";
+import { useClient } from "@/lib/client-context";
 import { Loader2, Sparkles } from "lucide-react";
 
 const CONTENT_TYPES = [
@@ -59,6 +60,7 @@ type VideoBriefFormProps = {
 };
 
 export function VideoBriefForm({ onSuccess }: VideoBriefFormProps) {
+  const { clientId } = useClient();
   const [brand, setBrand] = useState("");
   const [contentType, setContentType] = useState("");
   const [platform, setPlatform] = useState("");
@@ -113,6 +115,15 @@ export function VideoBriefForm({ onSuccess }: VideoBriefFormProps) {
         throw new Error(data.error || "Failed to create request");
       }
 
+      // The request is saved even when generation couldn't be started; say so instead of
+      // announcing a run that isn't happening. It can be retried from the Brief Library.
+      const created = await res.json().catch(() => null);
+      if (created?.status === "error") {
+        throw new Error(
+          `${created.errorMessage || "Generation could not be started."} The request was saved — retry it from the Brief Library.`
+        );
+      }
+
       setSuccess(true);
       setBrand("");
       setContentType("");
@@ -142,7 +153,7 @@ export function VideoBriefForm({ onSuccess }: VideoBriefFormProps) {
         {/* Brand Selection */}
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">Brand *</label>
-          <BrandSelect value={brand} onValueChange={setBrand} />
+          <BrandSelect value={brand} onValueChange={setBrand} preselectId={clientId} />
         </div>
 
         {/* Scenario Direction */}

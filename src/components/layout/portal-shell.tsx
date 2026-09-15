@@ -11,9 +11,11 @@ type PortalShellProps = {
   children: React.ReactNode;
   config: AppConfig | null;
   userEmail?: string;
+  /** The signed-in user's portal role (admin / member / viewer), read server-side by the layout. */
+  role: string;
 };
 
-export function PortalShell({ children, config, userEmail }: PortalShellProps) {
+export function PortalShell({ children, config, userEmail, role }: PortalShellProps) {
   const isMultiClient = config?.features?.multi_client === true;
 
   const content = (
@@ -24,6 +26,7 @@ export function PortalShell({ children, config, userEmail }: PortalShellProps) {
           brandColor={config?.brandColor || undefined}
           features={config?.features}
           userEmail={userEmail}
+          role={role}
         />
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl px-10 py-12">

@@ -16,6 +16,9 @@ export async function POST(
 ) {
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
+  if (auth.portalUser.role === "viewer") {
+    return NextResponse.json({ error: "Viewers cannot change review status" }, { status: 403 });
+  }
 
   const { id } = await params;
   const body = await request.json();

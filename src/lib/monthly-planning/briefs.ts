@@ -13,7 +13,15 @@ import { CORE_ANGLES } from "@/lib/posting/captions";
 
 type PlanItem = typeof schema.planItems.$inferSelect;
 
-const STATIC_SYSTEM = `You are a senior creative director for Dynamic Gift (Australia's largest promotional products company, B2B). Write a STATIC ad brief for one social post. Output ONLY valid JSON (no markdown). Australian English. Do not invent facts/prices.
+/** Shared grounding block: each brand speaks in its own identity, never a sister brand's. */
+function brandGrounding(brandName: string): string {
+  return `Brand grounding: write for ${brandName} only. Every fact, capability, service promise, stat or claim must come from ${brandName}'s own brand context and USPs in the user message. ${brandName} has sister brands — never borrow their names, facts, claims or positioning; if it is not in ${brandName}'s own context, leave it out. The angle is a theme, not a fact: only assert what it implies where ${brandName}'s context supports it.`;
+}
+
+function staticSystem(brandName: string): string {
+  return `You are a senior creative director for ${brandName} (an Australian promotional products company, B2B). Write a STATIC ad brief for one social post. Output ONLY valid JSON (no markdown). Australian English. Do not invent facts/prices.
+
+${brandGrounding(brandName)}
 
 Shape:
 {
@@ -25,8 +33,12 @@ Shape:
   "caption_direction": "guidance for the organic caption (tone, CTA)",
   "product_name": "the product this features (or null)"
 }`;
+}
 
-const VIDEO_SYSTEM = `You are a senior video creative director for Dynamic Gift (B2B promotional products). Write a VIDEO brief a creator can execute. Output ONLY valid JSON (no markdown). Australian English, UGC problem→solution style, SHOW don't tell.
+function videoSystem(brandName: string): string {
+  return `You are a senior video creative director for ${brandName} (B2B promotional products). Write a VIDEO brief a creator can execute. Output ONLY valid JSON (no markdown). Australian English, UGC problem→solution style, SHOW don't tell.
+
+${brandGrounding(brandName)}
 
 Shape:
 {
@@ -37,6 +49,7 @@ Shape:
   "format_specs": "duration + orientation (e.g. 15s, 9:16) + on-screen text notes",
   "tone_notes": "delivery + brand voice notes"
 }`;
+}
 
 function angleLabel(tag: string | null): string {
   return CORE_ANGLES.find((a) => a.tag === tag)?.label || "brand value";
@@ -73,7 +86,7 @@ Brand context: ${ctx.brandIntel.slice(0, 2500)}`;
 
     const isStatic = item.assetType === "static";
     const { text } = await callClaude({
-      system: isStatic ? STATIC_SYSTEM : VIDEO_SYSTEM,
+      system: isStatic ? staticSystem(ctx.brandName) : videoSystem(ctx.brandName),
       messages: [{ role: "user", content: `${shared}\n\nWrite the ${isStatic ? "static" : "video"} brief JSON now.` }],
       maxTokens: 3000,
       budgetTokens: 1500,

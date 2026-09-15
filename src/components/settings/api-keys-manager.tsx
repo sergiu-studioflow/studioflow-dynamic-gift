@@ -6,14 +6,21 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
-  Eye,
-  EyeOff,
   Save,
   Trash2,
   X,
   Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type ApiKeyInfo = {
   keyName: string;
@@ -21,23 +28,29 @@ type ApiKeyInfo = {
   description: string;
   source: "custom" | "default" | "not_set";
   maskedValue: string;
+  /** A server default (env var) exists to fall back to when the custom key is removed. */
+  hasDefault?: boolean;
   updatedAt: string | null;
 };
 
-export function ApiKeysManager() {
+/** canEdit: only admins can add, update or remove keys (the API enforces the same). */
+export function ApiKeysManager({ canEdit = false }: { canEdit?: boolean }) {
   const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<ApiKeyInfo | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const load = useCallback(() => {
-    setLoading(true);
-    fetch("/api/settings/api-keys")
-      .then((r) => r.json())
-      .then((data) => { if (Array.isArray(data)) setKeys(data); })
+    return fetch("/api/settings/api-keys")
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (Array.isArray(data)) setKeys(data);
+        else setMessage({ type: "error", text: data?.error || "Failed to load API keys" });
+      })
       .catch(() => setMessage({ type: "error", text: "Failed to load API keys" }))
       .finally(() => setLoading(false));
   }, []);
@@ -60,7 +73,7 @@ export function ApiKeysManager() {
         setEditValue("");
         load();
       } else {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         setMessage({ type: "error", text: data.error || "Failed to save" });
       }
     } catch {
@@ -70,18 +83,26 @@ export function ApiKeysManager() {
     }
   };
 
-  const handleDelete = async (keyName: string) => {
-    setDeleting(keyName);
+  const handleDelete = async (key: ApiKeyInfo) => {
+    setConfirmRemove(null);
+    setDeleting(key.keyName);
     setMessage(null);
     try {
       const res = await fetch("/api/settings/api-keys", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keyName }),
+        body: JSON.stringify({ keyName: key.keyName }),
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setMessage({ type: "success", text: "Custom key removed — using default" });
+        setMessage(
+          data.fallback === "default"
+            ? { type: "success", text: `Custom ${key.label} key removed — now using the server's default key.` }
+            : { type: "error", text: `Custom ${key.label} key removed. No default key is configured, so features that use ${key.label} won't work until a new key is added.` }
+        );
         load();
+      } else {
+        setMessage({ type: "error", text: data.error || "Failed to remove key" });
       }
     } catch {
       setMessage({ type: "error", text: "Failed to remove key" });
@@ -109,6 +130,7 @@ export function ApiKeysManager() {
           <h2 className="text-sm font-semibold text-foreground">API Keys</h2>
           <p className="text-[11px] text-muted-foreground">
             Configure your own API keys for AI services. Keys are encrypted at rest.
+            {!canEdit ? " Only admins can change them." : null}
           </p>
         </div>
       </div>
@@ -213,7 +235,7 @@ export function ApiKeysManager() {
                 </div>
 
                 {/* Actions */}
-                {!isEditing && (
+                {canEdit && !isEditing && (
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       onClick={() => { setEditingKey(key.keyName); setEditValue(""); }}
@@ -224,8 +246,9 @@ export function ApiKeysManager() {
                     </button>
                     {key.source === "custom" && (
                       <button
-                        onClick={() => handleDelete(key.keyName)}
+                        onClick={() => setConfirmRemove(key)}
                         disabled={isDeleting}
+                        title={`Remove the custom ${key.label} key`}
                         className="flex items-center gap-1 rounded-lg border border-red-500/20 px-2.5 py-1.5 text-[11px] font-medium text-red-500 hover:bg-red-500/10 transition-colors"
                       >
                         {isDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
@@ -244,9 +267,41 @@ export function ApiKeysManager() {
         <Shield className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
         <div className="text-[11px] text-muted-foreground leading-relaxed">
           <p className="font-medium text-foreground mb-0.5">How it works</p>
-          <p>Custom keys override the default keys for your portal. If you remove a custom key, the system falls back to the default. All keys are AES-256 encrypted at rest.</p>
+          <p>
+            Custom keys override the portal&apos;s default keys. Removing a custom key falls back to the default only
+            where one is configured on the server; keys without a default stop working until a new key is added. All
+            keys are AES-256 encrypted at rest.
+          </p>
         </div>
       </div>
+
+      {/* Remove confirmation */}
+      <Dialog open={!!confirmRemove} onOpenChange={(open) => { if (!open) setConfirmRemove(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Remove the custom {confirmRemove?.label} key?</DialogTitle>
+            <DialogDescription>
+              {confirmRemove?.hasDefault
+                ? `The portal will switch to the default ${confirmRemove?.label} key configured on the server.`
+                : `There is no default ${confirmRemove?.label} key on the server — everything that uses ${confirmRemove?.label} will stop working until a new key is added.`}
+              {" "}The removed key can&apos;t be recovered from the portal.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="ghost" onClick={() => setConfirmRemove(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="gap-2"
+              onClick={() => confirmRemove && handleDelete(confirmRemove)}
+            >
+              <Trash2 className="h-4 w-4" />
+              Remove key
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

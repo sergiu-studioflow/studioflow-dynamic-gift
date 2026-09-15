@@ -35,7 +35,10 @@ import { ReferenceUpload } from "./reference-upload";
 import { StepProgress, type Step } from "./step-progress";
 import { InspoGalleryDialog } from "./inspo-gallery-dialog";
 import { WinnersGalleryDialog } from "./winners-gallery-dialog";
+import { qcShippable, qcHoldReason } from "./ad-card";
 import { useClient } from "@/lib/client-context";
+import { QcBadge, useQcAutoGrade } from "@/components/qc/review-scorecard";
+import { downloadGeneratedAsset } from "@/lib/static-ads/download-client";
 
 type Product = {
   id: string;
@@ -47,6 +50,8 @@ type UnifiedGeneratorProps = {
   products: Product[];
   onGalleryRefresh: () => void;
   onEditAd?: (generationId: string) => void;
+  /** False while another tab is showing — the component stays mounted so polling continues. */
+  isActive?: boolean;
 };
 
 type ReferenceMode = "upload" | "auto" | "winners";
@@ -67,6 +72,8 @@ type VariationResult = {
   errorMessage?: string;
   /** Server hint for which step of the chain this id is currently in. */
   kieState?: "waiting-source" | "processing" | "pending" | string;
+  /** Quality Control verdict — Download / Winner unlock only when shippable. */
+  qcStatus?: string | null;
 };
 
 type FormatGroup = {
@@ -99,7 +106,7 @@ function buildSteps(currentStep: number): Step[] {
   ];
 }
 
-export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: UnifiedGeneratorProps) {
+export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd, isActive = true }: UnifiedGeneratorProps) {
   const { clientId, clientSlug } = useClient();
   const [selectedProductId, setSelectedProductId] = useState("");
   const [referenceMode, setReferenceMode] = useState<ReferenceMode>("auto");
@@ -118,6 +125,7 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
   const [winnerLoading, setWinnerLoading] = useState(false);
   const [savedWinnerIds, setSavedWinnerIds] = useState<Set<string>>(new Set());
   const [savingWinnerIds, setSavingWinnerIds] = useState<Set<string>>(new Set());
+  const [actionError, setActionError] = useState<string | null>(null);
   const [state, setState] = useState<PipelineState>({ phase: "idle" });
   // Lightbox now identifies a tile within a specific format group.
   const [lightboxIndex, setLightboxIndex] = useState<
@@ -166,13 +174,22 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
     return () => stepTimersRef.current.forEach(clearTimeout);
   }, []);
 
+  // A reference / winner request can resolve after the brand was switched — its result
+  // belongs to the previous brand and must be dropped.
+  const clientIdRef = useRef(clientId);
+  useEffect(() => {
+    clientIdRef.current = clientId;
+  }, [clientId]);
+
   // Fetch a random reference from the library. Scoped to the active client so a
   // brand draws on its own references (with the shared pool as fallback) rather
   // than a random ad from every other brand's pool.
   const fetchRandomRef = useCallback(async () => {
+    const requestedFor = clientId;
     setAutoLoading(true);
     try {
       const res = await fetch(`/api/reference-library/random${clientId ? `?clientId=${clientId}` : ""}`);
+      if (clientIdRef.current !== requestedFor) return;
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         console.error("Failed to fetch random ref:", data.error);
@@ -180,6 +197,7 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
         return;
       }
       const data = await res.json();
+      if (clientIdRef.current !== requestedFor) return;
       setAutoRef({
         id: data.id,
         name: data.name,
@@ -187,23 +205,31 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
         previewUrl: data.previewUrl,
       });
     } catch {
-      setAutoRef(null);
+      if (clientIdRef.current === requestedFor) setAutoRef(null);
     } finally {
-      setAutoLoading(false);
+      if (clientIdRef.current === requestedFor) setAutoLoading(false);
     }
   }, [clientId]);
 
-  // Fetch a random winner from the winners library
+  // Fetch a random winner from THIS brand's winners library. Winners are a brand's own
+  // creative, so there is no unscoped fallback.
   const fetchRandomWinner = useCallback(async () => {
+    const requestedFor = clientId;
+    if (!requestedFor) return;
     setWinnerLoading(true);
     try {
-      const res = await fetch(`/api/winners/random${clientId ? `?clientId=${clientId}` : ""}`);
+      const res = await fetch(`/api/winners/random?clientId=${requestedFor}`);
+      if (clientIdRef.current !== requestedFor) return;
       if (!res.ok) { setWinnerRef(null); return; }
       const data = await res.json();
+      if (clientIdRef.current !== requestedFor) return;
       setWinnerRef({ id: data.id, name: data.name, imageUrl: data.imageUrl, previewUrl: data.previewUrl });
-    } catch { setWinnerRef(null); }
-    finally { setWinnerLoading(false); }
-  }, []);
+    } catch {
+      if (clientIdRef.current === requestedFor) setWinnerRef(null);
+    } finally {
+      if (clientIdRef.current === requestedFor) setWinnerLoading(false);
+    }
+  }, [clientId]);
 
   // Drop a reference belonging to the previous brand as soon as the client changes,
   // so the auto-fetch below re-runs instead of keeping another brand's ad selected.
@@ -246,7 +272,7 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
         const { data } = match.value;
         if (data.status === "completed" && data.imageUrl) {
           refreshGallery = true;
-          return { ...entry, status: "completed" as const, imageUrl: data.imageUrl };
+          return { ...entry, status: "completed" as const, imageUrl: data.imageUrl, qcStatus: data.qcStatus };
         }
         if (data.status === "error") {
           return {
@@ -275,6 +301,48 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
     return () => clearInterval(interval);
   }, [state, onGalleryRefresh]);
 
+  // Finished tiles still awaiting a Quality Control verdict. While the tab is visible, pump
+  // grading (same as the Static Gallery) and pick up each verdict, so Download / Winner
+  // unlock within seconds instead of failing with "held by Quality Control".
+  const qcPendingIds =
+    state.phase === "generating"
+      ? state.formats.flatMap((fg) =>
+          fg.results.filter((r) => r.status === "completed" && r.qcStatus === "pending").map((r) => r.id)
+        )
+      : [];
+  useQcAutoGrade(isActive && qcPendingIds.length > 0, () => {
+    const ids = qcPendingIds;
+    void Promise.allSettled(
+      ids.map(async (id) => {
+        const res = await fetch(`/api/static-ads/generate/${id}`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        return typeof data.qcStatus === "string" ? { id, qcStatus: data.qcStatus as string } : null;
+      })
+    ).then((results) => {
+      const verdicts = new Map<string, string>();
+      for (const r of results) {
+        if (r.status === "fulfilled" && r.value && r.value.qcStatus !== "pending") {
+          verdicts.set(r.value.id, r.value.qcStatus);
+        }
+      }
+      if (verdicts.size === 0) return;
+      setState((prev) => {
+        if (prev.phase !== "generating") return prev;
+        return {
+          ...prev,
+          formats: prev.formats.map((fg) => ({
+            ...fg,
+            results: fg.results.map((r) => {
+              const verdict = verdicts.get(r.id);
+              return verdict !== undefined && verdict !== r.qcStatus ? { ...r, qcStatus: verdict } : r;
+            }),
+          })),
+        };
+      });
+    });
+  });
+
   const handleGenerate = useCallback(async () => {
     if (!selectedProductId || !activeReferenceUrl) return;
     if (aspectRatios.size === 0) return;
@@ -289,6 +357,7 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
     });
     setSavedWinnerIds(new Set());
     setSavingWinnerIds(new Set());
+    setActionError(null);
 
     stepTimersRef.current.forEach(clearTimeout);
     stepTimersRef.current = STEP_TIMINGS.slice(1).map((s) =>
@@ -384,6 +453,7 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
 
   const handleSaveToWinners = useCallback(async (generationId: string) => {
     if (savedWinnerIds.has(generationId) || savingWinnerIds.has(generationId)) return;
+    setActionError(null);
     setSavingWinnerIds((prev) => new Set(prev).add(generationId));
     try {
       const res = await fetch("/api/winners/save-from-gallery", {
@@ -393,8 +463,13 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
       });
       if (res.ok) {
         setSavedWinnerIds((prev) => new Set(prev).add(generationId));
+      } else {
+        const data = await res.json().catch(() => null);
+        setActionError(data?.error || `Couldn't save winner (${res.status})`);
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't save winner");
+    }
     finally {
       setSavingWinnerIds((prev) => {
         const next = new Set(prev);
@@ -404,10 +479,14 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
     }
   }, [savedWinnerIds, savingWinnerIds]);
 
-  const handleDownload = useCallback((generationId: string, imageUrl: string) => {
+  const handleDownload = useCallback(async (generationId: string, imageUrl: string) => {
+    setActionError(null);
     const filename = `${selectedProduct?.name?.replace(/\s+/g, "-") || "ad"}-${generationId.slice(0, 8)}.png`;
-    const proxyUrl = `/api/static-ads/download?url=${encodeURIComponent(imageUrl)}&filename=${encodeURIComponent(filename)}`;
-    window.open(proxyUrl, "_blank");
+    try {
+      await downloadGeneratedAsset(imageUrl, filename);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Download failed");
+    }
   }, [selectedProduct]);
 
   const isProcessing =
@@ -611,7 +690,7 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
               ) : (
                 <div className="flex flex-col items-center gap-2 py-6 text-muted-foreground/40">
                   <Trophy className="h-8 w-8" />
-                  <p className="text-xs">No winners saved yet</p>
+                  <p className="text-xs">{clientId ? "No winners saved yet" : "Select a brand to use its winners"}</p>
                   <p className="text-[10px]">Save your best ads from the Gallery</p>
                 </div>
               )}
@@ -868,6 +947,18 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
 
       {/* RIGHT: result preview / step progress / per-format final-ads grids */}
       <div className="flex-1 min-w-0 flex flex-col gap-4">
+        {actionError && state.phase === "generating" && (
+          <div className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+            <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+            <p className="flex-1 text-xs text-red-500">{actionError}</p>
+            <button
+              onClick={() => setActionError(null)}
+              className="text-[11px] text-red-400 hover:underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         {state.phase === "generating" ? (
           state.formats.map((fg, fi) => {
             const ready = fg.results.filter((r) => r.status === "completed").length;
@@ -1005,6 +1096,7 @@ export function UnifiedGenerator({ products, onGalleryRefresh, onEditAd }: Unifi
             onSaveWinner={handleSaveToWinners}
             onEdit={onEditAd}
             onDownload={handleDownload}
+            errorMessage={actionError}
           />
         );
       })()}
@@ -1090,6 +1182,8 @@ function VariationTile({
   onZoom,
 }: VariationTileProps) {
   const showBadge = total > 1;
+  const shippable = qcShippable(variation.qcStatus);
+  const holdReason = shippable ? null : qcHoldReason(variation.qcStatus);
   const stop = (handler: () => void) => (e: React.MouseEvent) => {
     e.stopPropagation();
     handler();
@@ -1163,21 +1257,31 @@ function VariationTile({
           {index + 1}/{total}
         </span>
       )}
-      <span className="absolute top-2 right-2 flex items-center gap-1 rounded-md bg-black/50 backdrop-blur-sm px-2 py-0.5 text-[10px] font-medium text-white opacity-0 group-hover:opacity-100 transition-opacity">
-        <Maximize2 className="h-3 w-3" />
-        Zoom
-      </span>
+      <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+        <QcBadge qcStatus={variation.qcStatus} className="bg-background/90 backdrop-blur-sm" />
+        <span className="flex items-center gap-1 rounded-md bg-black/50 backdrop-blur-sm px-2 py-0.5 text-[10px] font-medium text-white opacity-0 group-hover:opacity-100 transition-opacity">
+          <Maximize2 className="h-3 w-3" />
+          Zoom
+        </span>
+      </div>
       <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
         <div className="flex items-center justify-end gap-1.5">
+          {holdReason && (
+            <span className="mr-auto min-w-0 truncate text-[10px] text-white/85" title={holdReason}>
+              {holdReason}
+            </span>
+          )}
           <button
             onClick={stop(onSaveWinner)}
-            disabled={isSaving || isSaved}
-            title={isSaved ? "Saved as Winner" : "Save as Winner"}
+            disabled={isSaving || isSaved || !shippable}
+            title={holdReason ?? (isSaved ? "Saved as Winner" : "Save as Winner")}
             className={cn(
-              "flex items-center gap-1 rounded-md backdrop-blur-sm px-2 py-1 text-[10px] font-medium transition-colors",
+              "flex items-center gap-1 rounded-md backdrop-blur-sm px-2 py-1 text-[10px] font-medium transition-colors disabled:cursor-not-allowed",
               isSaved
                 ? "bg-primary/30 text-primary cursor-default"
-                : "bg-white/20 text-white hover:bg-white/30"
+                : shippable
+                  ? "bg-white/20 text-white hover:bg-white/30"
+                  : "bg-white/10 text-white/50"
             )}
           >
             {isSaving ? (
@@ -1202,10 +1306,14 @@ function VariationTile({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              if (variation.imageUrl) onDownload(variation.imageUrl);
+              if (variation.imageUrl && shippable) onDownload(variation.imageUrl);
             }}
-            title="Download"
-            className="flex items-center gap-1 rounded-md bg-white/20 backdrop-blur-sm px-2 py-1 text-[10px] font-medium text-white hover:bg-white/30 transition-colors"
+            disabled={!shippable}
+            title={holdReason ?? "Download"}
+            className={cn(
+              "flex items-center gap-1 rounded-md backdrop-blur-sm px-2 py-1 text-[10px] font-medium transition-colors disabled:cursor-not-allowed",
+              shippable ? "bg-white/20 text-white hover:bg-white/30" : "bg-white/10 text-white/50"
+            )}
           >
             <DownloadIcon className="h-3 w-3" />
           </button>
@@ -1227,6 +1335,8 @@ type VariationLightboxProps = {
   onSaveWinner: (generationId: string) => void;
   onEdit?: (generationId: string) => void;
   onDownload: (generationId: string, imageUrl: string) => void;
+  /** A failed Download / Winner action — the page banner sits behind this modal. */
+  errorMessage?: string | null;
 };
 
 function VariationLightbox({
@@ -1241,6 +1351,7 @@ function VariationLightbox({
   onSaveWinner,
   onEdit,
   onDownload,
+  errorMessage,
 }: VariationLightboxProps) {
   const variation = results[index];
   const total = results.length;
@@ -1261,6 +1372,7 @@ function VariationLightbox({
   const isSaved = savedWinnerIds.has(variation.id);
   const isSaving = savingWinnerIds.has(variation.id);
   const isCompleted = variation.status === "completed" && !!variation.imageUrl;
+  const shippable = qcShippable(variation.qcStatus);
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -1315,20 +1427,28 @@ function VariationLightbox({
         </div>
 
         <div className="flex items-center justify-between gap-3 px-1">
-          <p className="text-xs text-muted-foreground">
-            {productName ? `${productName} · ` : ""}
-            {hasMultiple ? `${index + 1} of ${total}` : "Variation"}
-          </p>
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="text-xs text-muted-foreground">
+              {productName ? `${productName} · ` : ""}
+              {hasMultiple ? `${index + 1} of ${total}` : "Variation"}
+            </p>
+            {isCompleted && <QcBadge qcStatus={variation.qcStatus} />}
+            {isCompleted && !shippable && (
+              <span className="text-[11px] text-muted-foreground truncate">{qcHoldReason(variation.qcStatus)}</span>
+            )}
+          </div>
           {isCompleted && (
             <div className="flex items-center gap-2">
               <button
                 onClick={() => onSaveWinner(variation.id)}
-                disabled={isSaving || isSaved}
+                disabled={isSaving || isSaved || !shippable}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed",
                   isSaved
                     ? "bg-primary/15 text-primary cursor-default"
-                    : "bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
+                    : shippable
+                      ? "bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
+                      : "bg-muted text-muted-foreground"
                 )}
               >
                 {isSaving ? (
@@ -1350,8 +1470,9 @@ function VariationLightbox({
                 </button>
               )}
               <button
-                onClick={() => variation.imageUrl && onDownload(variation.id, variation.imageUrl)}
-                className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:brightness-110 transition-all"
+                onClick={() => variation.imageUrl && shippable && onDownload(variation.id, variation.imageUrl)}
+                disabled={!shippable}
+                className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100"
               >
                 <DownloadIcon className="h-3.5 w-3.5" />
                 Download
@@ -1359,6 +1480,12 @@ function VariationLightbox({
             </div>
           )}
         </div>
+        {errorMessage && (
+          <p className="flex items-center gap-1.5 px-1 text-xs text-red-500">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            {errorMessage}
+          </p>
+        )}
       </DialogContent>
     </Dialog>
   );

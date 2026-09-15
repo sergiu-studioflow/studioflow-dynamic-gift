@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { submitGptImage2Job, REFINE_PROMPT, mapAspectForGpt2 } from "@/lib/static-ads/kie-ai";
+import { newChainClaimToken } from "@/lib/static-ads/chain";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -114,6 +115,9 @@ export async function POST(req: NextRequest) {
         adCopy: source.adCopy,
         analysisJson: null,
         sourceGenerationId: source.id,
+        // This route submits the job itself. Inserting pre-claimed stops a concurrent chain
+        // sweep from also firing one for the row before the task id is written below.
+        kieJobId: newChainClaimToken(),
         // batchId/batchSize/batchIndex default to NULL/1/1 — refined ads are singletons.
       }))
     )
@@ -157,6 +161,7 @@ export async function POST(req: NextRequest) {
         .set({
           status: "error",
           errorMessage: message,
+          kieJobId: null,
           updatedAt: new Date(),
         })
         .where(eq(schema.staticAdGenerations.id, gen.id));

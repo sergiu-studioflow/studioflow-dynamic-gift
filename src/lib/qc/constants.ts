@@ -60,7 +60,18 @@ export function judgeCriteriaFor(lane: Lane, isVideo = false) {
 export const GEMINI_MODEL = (process.env.QC_GEMINI_MODEL || "gemini-flash-latest").trim();
 export const MAX_ATTEMPTS = 3;
 
-export const GATE_STATUSES = ["pending", "running", "complete", "failed"] as const;
+// A transient provider error (network, 429, 5xx, vault blip) hands its attempt back by
+// raising that review's max_attempts by one — at most this many times. Unbounded, a judge
+// that never comes back (e.g. a blocked host) requeued the same reviews forever.
+export const MAX_TRANSIENT_REQUEUES = 10;
+
+// A review that just errored is not re-claimed for this long, so the UI pump (every ~5s)
+// can't burn its whole retry budget during a one-minute provider outage.
+export const RETRY_BACKOFF_SECONDS = 60;
+
+// 'dismissed' = a human rejection cleared from the Quality Control queue. The piece stays
+// rejected (held); only the queue entry is settled.
+export const GATE_STATUSES = ["pending", "running", "complete", "failed", "dismissed"] as const;
 
 // qc_status values on the output rows; ('approved','skipped') = shippable.
 export const QC_STATUSES = ["pending", "flagged", "approved", "rejected", "skipped"] as const;

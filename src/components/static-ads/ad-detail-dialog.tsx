@@ -12,31 +12,36 @@ import {
 } from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { QcBadge, QcReviewPanel } from "@/components/qc/review-scorecard";
-import { qcShippable } from "./ad-card";
+import { qcShippable, qcHoldReason } from "./ad-card";
 import type { StaticAdGeneration } from "./ad-card";
+import { downloadGeneratedAsset } from "@/lib/static-ads/download-client";
 
 type AdDetailDialogProps = {
   generation: StaticAdGeneration | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDelete?: (id: string) => void;
+  /** An error from an action the parent ran for this dialog (e.g. a refused delete). */
+  errorMessage?: string | null;
 };
 
 type Variation = StaticAdGeneration & {
   finalPrompt?: string | null;
 };
 
-export function AdDetailDialog({ generation, open, onOpenChange, onDelete }: AdDetailDialogProps) {
+export function AdDetailDialog({ generation, open, onOpenChange, onDelete, errorMessage }: AdDetailDialogProps) {
   const isBatch = !!generation?.batchId && (generation?.batchSize ?? 1) > 1;
   const [variations, setVariations] = useState<Variation[] | null>(null);
   const [loadingBatch, setLoadingBatch] = useState(false);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setSavedIds(new Set());
     setSavingIds(new Set());
+    setActionError(null);
 
     if (!isBatch || !generation?.batchId) {
       setVariations(null);
@@ -64,15 +69,20 @@ export function AdDetailDialog({ generation, open, onOpenChange, onDelete }: AdD
 
   if (!generation) return null;
 
-  const handleDownload = (g: { id: string; imageUrl: string | null; styleName: string | null; productName: string | null }) => {
+  const handleDownload = async (g: { id: string; imageUrl: string | null; styleName: string | null; productName: string | null }) => {
     if (!g.imageUrl) return;
+    setActionError(null);
     const filename = `${g.styleName || "ad"}-${g.productName || "product"}-${g.id.slice(0, 8)}.png`;
-    const proxyUrl = `/api/static-ads/download?url=${encodeURIComponent(g.imageUrl)}&filename=${encodeURIComponent(filename)}`;
-    window.open(proxyUrl, "_blank");
+    try {
+      await downloadGeneratedAsset(g.imageUrl, filename);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Download failed");
+    }
   };
 
   const handleSaveWinner = async (id: string) => {
     if (savedIds.has(id) || savingIds.has(id)) return;
+    setActionError(null);
     setSavingIds((prev) => new Set(prev).add(id));
     try {
       const res = await fetch("/api/winners/save-from-gallery", {
@@ -80,8 +90,15 @@ export function AdDetailDialog({ generation, open, onOpenChange, onDelete }: AdD
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ generationId: id }),
       });
-      if (res.ok) setSavedIds((prev) => new Set(prev).add(id));
-    } catch { /* ignore */ }
+      if (res.ok) {
+        setSavedIds((prev) => new Set(prev).add(id));
+      } else {
+        const data = await res.json().catch(() => null);
+        setActionError(data?.error || `Couldn't save winner (${res.status})`);
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't save winner");
+    }
     finally {
       setSavingIds((prev) => {
         const next = new Set(prev);
@@ -156,6 +173,9 @@ export function AdDetailDialog({ generation, open, onOpenChange, onDelete }: AdD
               </div>
 
               <div className="flex items-center gap-2">
+                {generation.status === "completed" && generation.imageUrl && !qcShippable(generation.qcStatus) && (
+                  <span className="text-[11px] text-muted-foreground">{qcHoldReason(generation.qcStatus)}</span>
+                )}
                 {generation.status === "completed" && generation.imageUrl && qcShippable(generation.qcStatus) && (
                   <button
                     onClick={() => handleDownload(generation)}
@@ -190,6 +210,13 @@ export function AdDetailDialog({ generation, open, onOpenChange, onDelete }: AdD
             )}
           </>
         )}
+
+        {(actionError || errorMessage) && (
+          <div className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+            <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
+            <p className="text-xs text-red-500">{actionError || errorMessage}</p>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -215,6 +242,9 @@ function VariationItem({
   const imgUrl = variation.thumbnailUrl || variation.imageUrl;
   const total = variation.batchSize ?? 1;
   const index = variation.batchIndex ?? 1;
+  const isReady = variation.status === "completed" && !!variation.imageUrl;
+  // Download / Winner stay hidden until Quality Control clears the piece — the routes 403 anyway.
+  const shippable = qcShippable(variation.qcStatus);
 
   return (
     <div className="group flex flex-col overflow-hidden rounded-xl border border-border bg-card">
@@ -237,13 +267,17 @@ function VariationItem({
         <span className="absolute top-2 left-2 rounded-md bg-black/55 backdrop-blur-sm px-2 py-0.5 text-[10px] font-semibold text-white">
           {index}/{total}
         </span>
-        <div className="absolute top-2 right-2">
+        <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
           <StatusBadge status={variation.status} />
+          {isReady && <QcBadge qcStatus={variation.qcStatus} />}
         </div>
       </div>
 
       <div className="p-2 flex items-center gap-1.5 flex-wrap">
-        {variation.status === "completed" && variation.imageUrl && (
+        {isReady && !shippable && (
+          <span className="text-[11px] text-muted-foreground">{qcHoldReason(variation.qcStatus)}</span>
+        )}
+        {isReady && shippable && (
           <button
             onClick={onSaveWinner}
             disabled={isSaving || isSaved}
@@ -264,7 +298,7 @@ function VariationItem({
             {isSaved ? "Winner!" : "Winner"}
           </button>
         )}
-        {variation.status === "completed" && variation.imageUrl && (
+        {isReady && shippable && (
           <button
             onClick={onDownload}
             className="flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary hover:bg-primary/20 transition-colors"

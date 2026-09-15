@@ -1,13 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useClient } from "@/lib/client-context";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { IdeationForm } from "./ideation-form";
 import { IdeaLibrary } from "./idea-library";
 import { Sparkles, Library } from "lucide-react";
 
 export function IdeationTabs() {
-  const [activeTab, setActiveTab] = useState("generate");
+  const { clientId } = useClient();
+  const searchParams = useSearchParams();
+  // Links from the Quality Control queue carry ?request=<id>: open straight on the library.
+  const [activeTab, setActiveTab] = useState(searchParams.get("request") ? "library" : "generate");
   const [refreshKey, setRefreshKey] = useState(0);
 
   return (
@@ -33,7 +38,8 @@ export function IdeationTabs() {
       </TabsContent>
 
       <TabsContent value="library">
-        <IdeaLibrary key={refreshKey} />
+        {/* Keyed by brand too: switching brands starts the library from a clean slate. */}
+        <IdeaLibrary key={`${refreshKey}:${clientId ?? "all"}`} />
       </TabsContent>
     </Tabs>
   );

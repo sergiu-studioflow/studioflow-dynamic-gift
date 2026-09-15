@@ -3,8 +3,10 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { desc, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod/v4";
+import { startTextWorkflow, TEXT_WORKFLOW_PATHS } from "@/app/api/webhook/_lib/n8n";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 const CONTENT_TYPES = [
   "UGC",
@@ -60,13 +62,31 @@ const createRequestSchema = z.object({
   additionalContext: z.string().optional(),
 });
 
-export async function GET() {
+/** GET /api/video-brief?clientId= — the selected brand's requests (requests store the brand
+ *  NAME); without clientId ("All Clients") every brand's. */
+export async function GET(httpReq: NextRequest) {
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
+
+  const clientId = httpReq.nextUrl.searchParams.get("clientId");
+  let brandName: string | null = null;
+  if (clientId) {
+    if (!z.guid().safeParse(clientId).success) {
+      return NextResponse.json({ error: "Invalid clientId" }, { status: 400 });
+    }
+    const [brand] = await db
+      .select({ name: schema.brands.brandName })
+      .from(schema.brands)
+      .where(eq(schema.brands.id, clientId))
+      .limit(1);
+    if (!brand) return NextResponse.json([]);
+    brandName = brand.name;
+  }
 
   const requests = await db
     .select()
     .from(schema.videoBriefRequests)
+    .where(brandName ? eq(schema.videoBriefRequests.brand, brandName) : undefined)
     .orderBy(desc(schema.videoBriefRequests.createdAt));
 
   return NextResponse.json(requests);
@@ -75,6 +95,9 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
+  if (auth.portalUser.role === "viewer") {
+    return NextResponse.json({ error: "Viewers cannot start generation runs" }, { status: 403 });
+  }
 
   const body = await request.json();
   const parsed = createRequestSchema.safeParse(body);
@@ -115,21 +138,23 @@ export async function POST(request: NextRequest) {
     })
     .returning();
 
-  const webhookBase =
-    process.env.N8N_WEBHOOK_BASE || "https://studio-flow.app.n8n.cloud";
-  const webhookUrl = `${webhookBase}/webhook/generate-dynamic-gift-video-brief?requestId=${record.id}`;
-
-  fetch(webhookUrl, { method: "GET" }).catch((err) => {
-    console.error("Failed to trigger n8n webhook:", err);
-  });
+  let saved = record;
+  const startError = await startTextWorkflow(TEXT_WORKFLOW_PATHS.videoBrief, record.id);
+  if (startError) {
+    [saved] = await db
+      .update(schema.videoBriefRequests)
+      .set({ status: "error", errorMessage: startError, updatedAt: new Date() })
+      .where(eq(schema.videoBriefRequests.id, record.id))
+      .returning();
+  }
 
   await db.insert(schema.activityLog).values({
     userId: auth.portalUser.id,
     action: "video_brief_request_created",
     resourceType: "video_brief_request",
     resourceId: record.id,
-    details: { brand: record.brand, contentType: record.contentType },
+    details: { brand: record.brand, contentType: record.contentType, started: !startError },
   });
 
-  return NextResponse.json(record, { status: 201 });
+  return NextResponse.json(saved, { status: 201 });
 }

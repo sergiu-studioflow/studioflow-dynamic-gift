@@ -21,7 +21,8 @@ const CLUSTER_COLORS: Record<string, string> = {
   "Finance": "text-slate-400",
 };
 
-export function ClientSwitcher() {
+/** canAddClients: admins only — /clients/new and POST /api/clients refuse everyone else. */
+export function ClientSwitcher({ canAddClients = false }: { canAddClients?: boolean }) {
   const { clients, clientId, clientName, isAllClients, setClient } = useClient();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -244,16 +245,18 @@ export function ClientSwitcher() {
           </div>
 
           {/* Add Client button */}
-          <div className="border-t border-white/10 p-2">
-            <Link
-              href="/clients/new"
-              onClick={() => setOpen(false)}
-              className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-white/50 transition-colors hover:bg-white/5 hover:text-white/80"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add Client
-            </Link>
-          </div>
+          {canAddClients && (
+            <div className="border-t border-white/10 p-2">
+              <Link
+                href="/clients/new"
+                onClick={() => setOpen(false)}
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-white/50 transition-colors hover:bg-white/5 hover:text-white/80"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add Client
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </div>

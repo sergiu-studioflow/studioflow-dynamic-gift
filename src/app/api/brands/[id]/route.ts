@@ -20,8 +20,8 @@ export async function PUT(
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
 
-  if (auth.portalUser.role === "viewer") {
-    return NextResponse.json({ error: "Insufficient permissions" }, { status: 403 });
+  if (auth.portalUser.role !== "admin") {
+    return NextResponse.json({ error: "Admin access required" }, { status: 403 });
   }
 
   const { id } = await params;
@@ -64,7 +64,8 @@ export async function PUT(
   }
 }
 
-// DELETE — remove a brand (admin only)
+// DELETE — remove a brand (admin only). Cascades to every row the brand owns, so it
+// matches DELETE /api/clients/[slug], which has always been admin-only.
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -72,8 +73,8 @@ export async function DELETE(
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
 
-  if (auth.portalUser.role === "viewer") {
-    return NextResponse.json({ error: "Insufficient permissions" }, { status: 403 });
+  if (auth.portalUser.role !== "admin") {
+    return NextResponse.json({ error: "Admin access required" }, { status: 403 });
   }
 
   const { id } = await params;

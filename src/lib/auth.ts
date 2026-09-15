@@ -34,6 +34,28 @@ export const auth = betterAuth({
     disableSignUp: true,
     minPasswordLength: 8,
   },
+
+  databaseHooks: {
+    session: {
+      create: {
+        // users.last_login_at (shown in Settings and User management) is ours, not Better
+        // Auth's, so nothing wrote it. Only sign-ins count: Better Auth also creates a
+        // session when a password change revokes the others.
+        after: async (session, ctx) => {
+          if (ctx?.path && !ctx.path.startsWith("/sign-in")) return;
+          try {
+            await db
+              .update(schema.users)
+              .set({ lastLoginAt: new Date() })
+              .where(eq(schema.users.userId, session.userId));
+          } catch (err) {
+            // Never fail a sign-in over a bookkeeping column.
+            console.warn("[auth] could not record last login:", err);
+          }
+        },
+      },
+    },
+  },
 });
 
 // =============================================
@@ -52,6 +74,8 @@ export type PortalUser = {
 export type AuthResult = {
   user: { id: string; email?: string };
   portalUser: PortalUser;
+  /** The Better Auth session making this request. */
+  sessionId: string;
 };
 
 export async function requireAuth(): Promise<AuthResult | NextResponse> {
@@ -79,6 +103,7 @@ export async function requireAuth(): Promise<AuthResult | NextResponse> {
   return {
     user: { id: session.user.id, email: session.user.email },
     portalUser,
+    sessionId: session.session.id,
   };
 }
 

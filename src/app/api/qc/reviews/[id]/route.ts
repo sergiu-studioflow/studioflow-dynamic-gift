@@ -3,7 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
 import { toAccessibleUrl } from "@/lib/r2";
-import type { SourceSystem } from "@/lib/qc/constants";
+import { MAX_ATTEMPTS, type SourceSystem } from "@/lib/qc/constants";
 import { sourceTableFor } from "@/lib/qc/enqueue";
 import { releaseHeldPlanItem } from "@/lib/qc/release";
 
@@ -75,7 +75,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 /**
  * PATCH /api/qc/reviews/[id]
- *   { clientId, action: "regenerate" }  → re-queue for a fresh AI grade
+ *   { clientId, action: "regenerate" }  → re-queue for a fresh AI grade (also how a failed
+ *                                         grade is dismissed)
+ *   { clientId, action: "dismiss" }     → clear a human rejection from the queue; the piece
+ *                                         stays rejected
  *   { clientId, overallPass: boolean }  → human override (approve / reject)
  */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -94,6 +97,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const mismatch = clientMismatch(review, body.clientId ?? null);
   if (mismatch) return mismatch;
 
+  // Settle a human rejection: it leaves the "held for review" queue, but the source row keeps
+  // qc_status 'rejected', so the piece stays out of downloads, Winners and posting.
+  if (body.action === "dismiss") {
+    if (!(review.status === "complete" && review.overridden && review.overallPass === false)) {
+      return NextResponse.json(
+        { error: "Only a human rejection can be dismissed — approve, reject or re-grade this one instead." },
+        { status: 400 }
+      );
+    }
+    await db
+      .update(schema.gateReviews)
+      .set({ status: "dismissed", reviewedBy: portalUser.id, reviewedAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.gateReviews.id, id));
+    return NextResponse.json({ ok: true, status: "dismissed" });
+  }
+
   // Re-grade: hand it back to the AI from a clean slate.
   if (body.action === "regenerate") {
     await db
@@ -101,6 +120,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       .set({
         status: "pending",
         attempts: 0,
+        maxAttempts: MAX_ATTEMPTS,
         overridden: false,
         reviewer: "ai",
         errorMessage: null,

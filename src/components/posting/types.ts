@@ -45,6 +45,15 @@ export type SocialAccount = {
   healthCheckedAt: string | null;
 };
 
+/** GET /api/posting/health — why posts may not be going out. */
+export type PostingHealth = {
+  tokenConfigured: boolean;
+  timezone: string;
+  accounts: Pick<SocialAccount, "platform" | "enabled" | "health" | "healthError" | "externalName">[];
+  overdueCount: number;
+  overdueMinutes: number;
+};
+
 export type PostingPrefs = {
   timezone: string;
   slotTimes: string[];

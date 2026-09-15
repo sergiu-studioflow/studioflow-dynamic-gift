@@ -26,6 +26,7 @@ type CompetitorSource = {
 import { computeBadge } from "./utils";
 import { GalleryCard } from "./gallery-card";
 import { FullViewModal } from "./full-view-modal";
+import { DEFAULT_META_AD_COUNTRY } from "./countries";
 
 const MEDIA_TYPES = ["Video", "Image", "Carousel", "Text"] as const;
 
@@ -58,11 +59,13 @@ export function AdLibraryTab({
   const [activeMediaTypes, setActiveMediaTypes] = useState<Set<string>>(new Set());
   const [sortBy, setSortBy] = useState("meta_default");
 
-  // Auto-select first active source
+  // Auto-select the first active source — also when the brand changes and the
+  // previous selection isn't in the new list.
   useEffect(() => {
-    if (!selectedSourceId && sources.length > 0) {
+    if (sources.length > 0 && !sources.some((s) => s.id === selectedSourceId)) {
       const firstActive = sources.find((s) => s.isActive) || sources[0];
       setSelectedSourceId(firstActive.id);
+      setSelectedSnapshot("");
     }
   }, [sources, selectedSourceId]);
 
@@ -70,7 +73,12 @@ export function AdLibraryTab({
 
   // Load ads when source or snapshot changes
   const loadAds = useCallback(async () => {
-    if (!selectedSource) return;
+    if (!selectedSource) {
+      // Don't keep showing another brand's (or a removed competitor's) ads.
+      setAds([]);
+      setSnapshots([]);
+      return;
+    }
     setLoading(true);
     try {
       const params = new URLSearchParams({
@@ -116,6 +124,7 @@ export function AdLibraryTab({
     setRefreshMessage(null);
 
     try {
+      const country = sources.find((s) => s.id === selectedSourceId)?.country || DEFAULT_META_AD_COUNTRY;
       // 1. Trigger the scrape (fire-and-forget — n8n returns immediately)
       const res = await fetch("/api/competitor-ads/refresh", {
         method: "POST",
@@ -123,13 +132,13 @@ export function AdLibraryTab({
         body: JSON.stringify({
           sourceId: selectedSourceId,
           clientId,
-          country: sources.find(s => s.id === selectedSourceId)?.country || "ALL",
+          country,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
-      if (data.error) {
-        setRefreshMessage({ type: "error", text: data.error });
+      if (!res.ok || data.error) {
+        setRefreshMessage({ type: "error", text: data.error || `Failed to trigger the scrape (HTTP ${res.status}).` });
         setRefreshing(false);
         return;
       }
@@ -137,7 +146,10 @@ export function AdLibraryTab({
       const previousSnapshotId = data.previousSnapshotId;
       const competitorPageId = data.competitorPageId;
 
-      setRefreshMessage({ type: "success", text: "Scraping in progress... this usually takes 1–3 minutes." });
+      setRefreshMessage({
+        type: "success",
+        text: `Scraping the Meta Ad Library (${data.country || country})... this usually takes 1–3 minutes.`,
+      });
 
       // 2. Poll the database every 10s for up to 5 minutes
       pollCountRef.current = 0;
@@ -174,7 +186,11 @@ export function AdLibraryTab({
         if (pollCountRef.current >= 30) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
-          setRefreshMessage({ type: "empty", text: "Scrape is still running. Refresh the page in a minute to check for results." });
+          // The n8n scraper runs fire-and-forget, so the portal can't see its outcome.
+          setRefreshMessage({
+            type: "empty",
+            text: "No new ads after 5 minutes. The scrape may still be running, or it may have failed upstream (for example if the shared Apify scraping account has hit its monthly usage limit). Check back shortly — if no new snapshot appears, the scrape didn't complete.",
+          });
           setRefreshing(false);
         }
       }, 10_000);

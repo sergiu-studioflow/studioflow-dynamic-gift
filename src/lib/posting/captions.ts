@@ -2,9 +2,9 @@
  * Organic caption generation for the posting scheduler.
  *
  * Turns a source creative (static ad / winner / video) into *organic* per-platform
- * social captions — NOT paid-ad copy. Grounded in the brand's intelligence + USPs
- * + the source context, and framed around one of Dynamic Gift's 5 core angles
- * (rotated per post so the queue naturally covers all five).
+ * social captions — NOT paid-ad copy. Written in the selected brand's own voice and
+ * grounded only in that brand's intelligence + USPs + the source context, framed
+ * around one of the 5 core angles (rotated per post so the queue naturally covers all five).
  *
  * Uses the vault-managed ANTHROPIC_API_KEY via getApiKey() (falls back to env).
  */
@@ -15,18 +15,25 @@ import { db, schema } from "@/lib/db";
 import { eq, sql } from "drizzle-orm";
 import { PLATFORMS, clampHashtags, type PlatformKey } from "./platforms";
 
-/** Dynamic Gift's 5 core angles (shared with the Ad Copy system). */
+/** The 5 core angles (shared with the Ad Copy system). */
 export const CORE_ANGLES = [
   { tag: "speed", label: "Speed & turnaround vs competitors" },
   { tag: "full_service", label: "Full-service concierge vs self-serve" },
-  { tag: "price", label: "Price competitiveness through direct importing" },
+  { tag: "price", label: "Price competitiveness and value" },
   { tag: "proof", label: "Proof points (stats, case studies, social proof)" },
   { tag: "objection", label: "Objection handling embedded naturally" },
 ] as const;
 
 export type PlatformCaptions = Record<PlatformKey, { caption: string; hashtags: string[] }>;
 
-const SYSTEM_PROMPT = `You are a senior organic social media copywriter for Dynamic Gift, Australia's largest promotional products company (a B2B brand). You write ORGANIC social posts — warm, helpful, brand-building — NOT paid ad copy. No hard-sell, no "SHOP NOW", no ad-style urgency stacking.
+/** Brand-neutral template: each brand writes in its own identity (no parent-company voice). */
+function systemPrompt(brandName: string): string {
+  return `You are a senior organic social media copywriter for ${brandName}, an Australian promotional products company (a B2B brand). You write ORGANIC social posts — warm, helpful, brand-building — NOT paid ad copy. No hard-sell, no "SHOP NOW", no ad-style urgency stacking.
+
+# Brand grounding
+- Write as ${brandName} only. Every fact, capability, service promise, stat or claim must come from ${brandName}'s own brand context and USPs in the user message.
+- ${brandName} has sister brands. Never borrow their names, facts, claims or positioning; if something is not in ${brandName}'s own context, leave it out.
+- The post's angle is a theme to lead with, not a fact — only assert what it implies (turnaround, pricing, importing, service) where ${brandName}'s context supports it.
 
 # Output rules
 - Output ONLY valid JSON. No markdown, no code fences, no prose before or after.
@@ -36,6 +43,7 @@ const SYSTEM_PROMPT = `You are a senior organic social media copywriter for Dyna
 - Each caption ends with ONE soft CTA (request a quote / get in touch / browse the range).
 - Return hashtags SEPARATELY (array, no '#'), never inside the caption text.
 - Keep captions within the per-platform length guidance given below.`;
+}
 
 function buildUserMessage(input: {
   brandName: string;
@@ -120,7 +128,7 @@ async function fetchBrandGrounding(clientId: string): Promise<{ brandName: strin
     .slice(0, 6000);
 
   return {
-    brandName: brand?.name || "Dynamic Gift",
+    brandName: brand?.name || "this brand",
     brandContext: brandContext || "(no brand intelligence on file)",
     usps: usps.map((u) => u.text).filter(Boolean),
   };
@@ -160,7 +168,7 @@ export async function generateOrganicCaptions(input: {
   });
 
   const { text } = await callClaude({
-    system: SYSTEM_PROMPT,
+    system: systemPrompt(brandName),
     messages: [{ role: "user", content: userMessage }],
     maxTokens: 2500,
     budgetTokens: 1200,

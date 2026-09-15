@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { ImageIcon, RefreshCw } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { AlertCircle, ImageIcon, RefreshCw, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AdCard, type StaticAdGeneration } from "./ad-card";
 import { AdDetailDialog } from "./ad-detail-dialog";
 import { useClient } from "@/lib/client-context";
 import { QC_FILTERS, useQcAutoGrade } from "@/components/qc/review-scorecard";
+import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
+import { downloadGeneratedAsset } from "@/lib/static-ads/download-client";
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -19,6 +21,13 @@ type AdGalleryProps = {
   refreshTrigger?: number;
 };
 
+/**
+ * The gallery API re-signs every image URL on each fetch, and a new URL makes the browser
+ * re-download the image. The grid refreshes every few seconds while ads render or grade, so
+ * a URL is reused for the same object while it is comfortably inside its 10-minute validity.
+ */
+const SIGNED_URL_REUSE_MS = 5 * 60 * 1000;
+
 export function AdGallery({ refreshTrigger }: AdGalleryProps) {
   const [generations, setGenerations] = useState<StaticAdGeneration[]>([]);
   const [filter, setFilter] = useState("all");
@@ -26,6 +35,11 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
   const [loading, setLoading] = useState(true);
   const [selectedGeneration, setSelectedGeneration] = useState<StaticAdGeneration | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [inFlightCount, setInFlightCount] = useState(0);
+  const signedUrlsRef = useRef(new Map<string, { url: string; signedAt: number }>());
   const { clientId } = useClient();
 
   const fetchGallery = useCallback(async () => {
@@ -38,7 +52,25 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
       const url = `/api/static-ads/gallery?${params.toString()}`;
       const res = await fetch(url);
       const data = await res.json();
-      if (Array.isArray(data)) setGenerations(data);
+      if (Array.isArray(data)) {
+        const now = Date.now();
+        const stable = (signed: string | null): string | null => {
+          if (!signed) return signed;
+          const objectUrl = signed.split("?")[0];
+          const cached = signedUrlsRef.current.get(objectUrl);
+          if (cached && now - cached.signedAt < SIGNED_URL_REUSE_MS) return cached.url;
+          signedUrlsRef.current.set(objectUrl, { url: signed, signedAt: now });
+          return signed;
+        };
+        setGenerations(
+          (data as StaticAdGeneration[]).map((g) => ({
+            ...g,
+            imageUrl: stable(g.imageUrl),
+            thumbnailUrl: stable(g.thumbnailUrl),
+          }))
+        );
+      }
+      setInFlightCount(Number(res.headers.get("x-in-flight-count") || 0));
     } catch (err) {
       console.error("[gallery] fetch error:", err);
     } finally {
@@ -57,31 +89,54 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
     fetchGallery
   );
 
-  // Auto-refresh while there are generating items
+  // Auto-refresh while there are generating items — including ads still rendering that the
+  // default view hides. Each refresh runs the server sweep that moves their chain forward.
   useEffect(() => {
-    const hasGenerating = generations.some((g) => g.status === "generating" || g.status === "pending");
+    const hasGenerating =
+      inFlightCount > 0 || generations.some((g) => g.status === "generating" || g.status === "pending");
     if (!hasGenerating) return;
 
     const interval = setInterval(fetchGallery, 5000);
     return () => clearInterval(interval);
-  }, [generations, fetchGallery]);
+  }, [generations, inFlightCount, fetchGallery]);
 
-  const handleDelete = async (id: string) => {
+  // Delete asks first: it is permanent and removes the image file too.
+  const handleDelete = (id: string) => {
+    setActionError(null);
+    setPendingDeleteId(id);
+  };
+
+  const confirmDelete = async () => {
+    const id = pendingDeleteId;
+    if (!id) return;
+    setDeleting(true);
     try {
-      await fetch(`/api/static-ads/gallery/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/static-ads/gallery/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setActionError(data?.error || `Delete failed (${res.status})`);
+        return;
+      }
       setGenerations((prev) => prev.filter((g) => g.id !== id));
       setDialogOpen(false);
       setSelectedGeneration(null);
     } catch (err) {
-      console.error("[gallery] delete error:", err);
+      setActionError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeleting(false);
+      setPendingDeleteId(null);
     }
   };
 
-  const handleDownload = (gen: StaticAdGeneration) => {
+  const handleDownload = async (gen: StaticAdGeneration) => {
     if (!gen.imageUrl) return;
+    setActionError(null);
     const filename = `${gen.styleName || "ad"}-${gen.productName || "product"}-${gen.id.slice(0, 8)}.png`;
-    const proxyUrl = `/api/static-ads/download?url=${encodeURIComponent(gen.imageUrl)}&filename=${encodeURIComponent(filename)}`;
-    window.open(proxyUrl, "_blank");
+    try {
+      await downloadGeneratedAsset(gen.imageUrl, filename);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Download failed");
+    }
   };
 
   return (
@@ -128,6 +183,20 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
         </button>
       </div>
 
+      {actionError && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+          <p className="flex-1 text-xs text-red-500">{actionError}</p>
+          <button
+            onClick={() => setActionError(null)}
+            aria-label="Dismiss"
+            className="rounded p-0.5 text-red-400 hover:bg-red-500/10"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Grid */}
       {generations.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
@@ -146,6 +215,7 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
               key={gen.id}
               generation={gen}
               onClick={() => {
+                setActionError(null);
                 setSelectedGeneration(gen);
                 setDialogOpen(true);
               }}
@@ -160,8 +230,18 @@ export function AdGallery({ refreshTrigger }: AdGalleryProps) {
       <AdDetailDialog
         generation={selectedGeneration}
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={(open) => { setDialogOpen(open); if (!open) setActionError(null); }}
         onDelete={handleDelete}
+        errorMessage={actionError}
+      />
+
+      <ConfirmDeleteDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(open) => { if (!open && !deleting) setPendingDeleteId(null); }}
+        onConfirm={confirmDelete}
+        count={1}
+        resourceName="ad"
+        loading={deleting}
       />
     </div>
   );

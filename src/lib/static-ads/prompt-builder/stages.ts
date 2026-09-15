@@ -304,7 +304,29 @@ export async function runVibe(ctx: BuildContext, dna: BrandDNA): Promise<VibePro
   return result;
 }
 
-// ─── Stage C — Product / Service study (parallel per item) ─────────────────────
+// ─── Stage C — Product / Service study (bounded parallel per item) ─────────────
+
+/**
+ * Each study is an Opus call (vision, sometimes web_fetch). A brand with dozens of
+ * products used to fire them all at once — a rate-limit storm and a build that could
+ * outrun the route's time limit. Study at most MAX_STUDIED_ITEMS (the context lists
+ * hero products and products with images first), STUDY_CONCURRENCY at a time.
+ */
+const MAX_STUDIED_ITEMS = 12;
+const STUDY_CONCURRENCY = 3;
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 /** Strip leading meta-preamble an LLM sometimes emits before the real paragraph. */
 function stripPreamble(text: string): string {
@@ -359,7 +381,7 @@ Begin your reply IMMEDIATELY with the description itself. Do NOT write any pream
     }
   };
 
-  const results = await Promise.all(ctx.items.map(studyOne));
+  const results = await mapWithConcurrency(ctx.items.slice(0, MAX_STUDIED_ITEMS), STUDY_CONCURRENCY, studyOne);
   return results.filter((r): r is ItemStudy => !!r && !!r.paragraph);
 }
 

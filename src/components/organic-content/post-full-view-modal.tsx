@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   X,
   ExternalLink,
@@ -20,6 +21,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useClient } from "@/lib/client-context";
+import { useSourceBrief } from "@/components/competitor-ads/use-source-brief";
 import type { OrganicPost } from "./types";
 import {
   formatNumber,
@@ -59,34 +61,9 @@ export function PostFullViewModal({
   const [currentSlide, setCurrentSlide] = useState(0);
   const [showTranscript, setShowTranscript] = useState(false);
   const [showCaption, setShowCaption] = useState(false);
-  const [briefing, setBriefing] = useState(false);
-  const [briefId, setBriefId] = useState<string | null>(null);
+  const sourceBrief = useSourceBrief("organic_post", post.id, clientId);
 
   const isCarousel = post.contentType === "Carousel" && slides.length > 0;
-
-  async function handleGenerateBrief() {
-    if (briefing || briefId) return;
-    setBriefing(true);
-    try {
-      const res = await fetch("/api/research-briefs/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceType: "organic_post",
-          sourceId: post.id,
-          clientId,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setBriefId(data.id);
-      }
-    } catch {
-      // silently fail
-    } finally {
-      setBriefing(false);
-    }
-  }
 
   return (
     <div
@@ -192,30 +169,31 @@ export function PostFullViewModal({
                 <ExternalLink className="h-3.5 w-3.5" />
                 Open
               </a>
-              {briefId ? (
-                <a
-                  href="/research-briefs"
+              {sourceBrief.briefId ? (
+                <Link
+                  href={`/research-briefs/${sourceBrief.briefId}`}
                   className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-green-500/10 text-green-500 hover:bg-green-500/20 transition-colors"
                 >
                   <CheckCircle2 className="h-3.5 w-3.5" />
                   View Brief
-                </a>
+                </Link>
               ) : (
                 <button
-                  onClick={handleGenerateBrief}
-                  disabled={briefing}
+                  onClick={sourceBrief.generate}
+                  disabled={sourceBrief.generating || sourceBrief.checking}
                   className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors disabled:opacity-60"
                 >
-                  {briefing ? (
+                  {sourceBrief.generating || sourceBrief.checking ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <FileText className="h-3.5 w-3.5" />
                   )}
-                  {briefing ? "Generating..." : "Generate Brief"}
+                  {sourceBrief.generating ? "Generating..." : "Generate Brief"}
                 </button>
               )}
             </div>
           </div>
+          {sourceBrief.error && <p className="text-xs text-red-500">{sourceBrief.error}</p>}
 
           {/* Caption */}
           {post.caption && (

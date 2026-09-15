@@ -9,7 +9,8 @@
  * asset per format, so it skips Claude caption generation entirely.
  *
  * Quality Control: static ads and videos held by the gate cannot enter the queue at all —
- * the same shape as the pre-existing "review graphic must be approved" rule below.
+ * the same shape as the pre-existing "review graphic must be approved" rule below — and
+ * recheckSourceForPublish() repeats the check right before a queued post goes live.
  */
 
 import { db, schema } from "@/lib/db";
@@ -51,6 +52,80 @@ export async function loadSource(sourceType: SourceType, sourceId: string): Prom
       return loadReviewGraphic(sourceId);
     default:
       throw new SourceError(`Unknown source type: ${sourceType}`);
+  }
+}
+
+export type PublishCheck = { ok: true } | { ok: false; retryLater: boolean; reason: string };
+
+const DELETED_SOURCE = (what: string) =>
+  `The ${what} behind this post was deleted after it was scheduled — re-queue it to publish.`;
+
+function qcPublishCheck(qcStatus: string | null): PublishCheck {
+  if (isShippable(qcStatus)) return { ok: true };
+  if (qcStatus === "pending") {
+    return { ok: false, retryLater: true, reason: "Waiting on a Quality Control re-check — publishes once it's approved." };
+  }
+  return {
+    ok: false,
+    retryLater: false,
+    reason: `Held by Quality Control (${qcStatus}) after it was scheduled — approve it in the QC queue, then Retry.`,
+  };
+}
+
+/**
+ * Re-validate a queued post's source at publish time. Checking only at queue time let an
+ * ad a human rejected after scheduling still go live. `retryLater` = a verdict is pending.
+ */
+export async function recheckSourceForPublish(post: {
+  sourceType: string;
+  sourceGenerationId: string | null;
+  sourceVideoId: string | null;
+  sourceReviewGraphicId: string | null;
+}): Promise<PublishCheck> {
+  switch (post.sourceType) {
+    case "static_ad": {
+      const [row] = post.sourceGenerationId
+        ? await db
+            .select({ qcStatus: schema.staticAdGenerations.qcStatus })
+            .from(schema.staticAdGenerations)
+            .where(eq(schema.staticAdGenerations.id, post.sourceGenerationId))
+            .limit(1)
+        : [];
+      if (!row) return { ok: false, retryLater: false, reason: DELETED_SOURCE("static ad") };
+      return qcPublishCheck(row.qcStatus);
+    }
+    case "video": {
+      const [row] = post.sourceVideoId
+        ? await db
+            .select({ qcStatus: schema.videoGenerations.qcStatus })
+            .from(schema.videoGenerations)
+            .where(eq(schema.videoGenerations.id, post.sourceVideoId))
+            .limit(1)
+        : [];
+      if (!row) return { ok: false, retryLater: false, reason: DELETED_SOURCE("video") };
+      return qcPublishCheck(row.qcStatus);
+    }
+    case "review_graphic": {
+      const [row] = post.sourceReviewGraphicId
+        ? await db
+            .select({ status: schema.reviewGraphics.status })
+            .from(schema.reviewGraphics)
+            .where(eq(schema.reviewGraphics.id, post.sourceReviewGraphicId))
+            .limit(1)
+        : [];
+      if (!row) return { ok: false, retryLater: false, reason: DELETED_SOURCE("review graphic") };
+      if (row.status !== "approved") {
+        return {
+          ok: false,
+          retryLater: false,
+          reason: `The review graphic is no longer approved (status: ${row.status}) — re-approve it, then Retry.`,
+        };
+      }
+      return { ok: true };
+    }
+    default:
+      // Winners are human-curated and have no gate.
+      return { ok: true };
   }
 }
 

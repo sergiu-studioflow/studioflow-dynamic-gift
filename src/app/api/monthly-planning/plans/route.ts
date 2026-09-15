@@ -1,11 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
-import { desc, eq, sql } from "drizzle-orm";
-import { generateMonthPlan, type PlanInputConfig } from "@/lib/monthly-planning/planner";
+import { desc, sql } from "drizzle-orm";
+import { runPlanningInBackground, type PlanInputConfig } from "@/lib/monthly-planning/planner";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // planner = one Claude call per brand
+export const maxDuration = 300; // the after() planning run shares this invocation's budget
 
 /** GET /api/monthly-planning/plans — list plans with item counts. */
 export async function GET() {
@@ -27,7 +27,8 @@ export async function GET() {
 /**
  * POST /api/monthly-planning/plans
  * Body: { title?, inputConfig: { brands[], month, postsPerBrand, platforms[], staticRatio, themes?, campaigns?, notes? } }
- * Creates the plan and expands it (inline) into plan_items → plan_ready.
+ * Creates the plan in 'planning' and returns at once; planning (one Claude call per brand)
+ * runs after the response, and the cron sweep finishes anything that doesn't fit.
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -37,33 +38,35 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => ({}));
-  const cfg = body.inputConfig as PlanInputConfig;
-  if (!cfg || !Array.isArray(cfg.brands) || cfg.brands.length === 0 || !cfg.month || !/^\d{4}-\d{2}$/.test(cfg.month)) {
+  const raw = (body.inputConfig || {}) as Partial<PlanInputConfig>;
+  const brands = Array.isArray(raw.brands) ? [...new Set(raw.brands.filter((b): b is string => typeof b === "string" && !!b))] : [];
+  if (brands.length === 0 || typeof raw.month !== "string" || !/^\d{4}-\d{2}$/.test(raw.month)) {
     return NextResponse.json({ error: "inputConfig needs brands[] and month (YYYY-MM)" }, { status: 400 });
   }
-  cfg.postsPerBrand = Math.max(1, Math.min(60, Number(cfg.postsPerBrand) || 8));
-  cfg.platforms = Array.isArray(cfg.platforms) && cfg.platforms.length ? cfg.platforms : ["facebook", "instagram"];
-  cfg.staticRatio = typeof cfg.staticRatio === "number" ? Math.max(0, Math.min(1, cfg.staticRatio)) : 0.6;
+  // Only the form's own fields — the planner keeps its progress in this object too.
+  const cfg: PlanInputConfig = {
+    brands,
+    month: raw.month,
+    postsPerBrand: Math.max(1, Math.min(60, Number(raw.postsPerBrand) || 8)),
+    platforms: Array.isArray(raw.platforms) && raw.platforms.length ? raw.platforms.map(String) : ["facebook", "instagram"],
+    staticRatio: typeof raw.staticRatio === "number" ? Math.max(0, Math.min(1, raw.staticRatio)) : 0.6,
+    themes: typeof raw.themes === "string" ? raw.themes : undefined,
+    campaigns: typeof raw.campaigns === "string" ? raw.campaigns : undefined,
+    notes: typeof raw.notes === "string" ? raw.notes : undefined,
+  };
 
   const [plan] = await db
     .insert(schema.monthlyPlans)
     .values({
       month: `${cfg.month}-01`,
-      title: body.title || `${cfg.month} content plan`,
+      title: typeof body.title === "string" && body.title ? body.title : `${cfg.month} content plan`,
       userId: auth.portalUser.id,
       inputConfig: cfg,
       status: "planning",
     })
     .returning();
 
-  try {
-    const { items } = await generateMonthPlan(plan.id);
-    return NextResponse.json({ id: plan.id, status: items > 0 ? "plan_ready" : "error", items }, { status: 201 });
-  } catch (err) {
-    await db
-      .update(schema.monthlyPlans)
-      .set({ status: "error", errorMessage: err instanceof Error ? err.message : "Planning failed", updatedAt: new Date() })
-      .where(eq(schema.monthlyPlans.id, plan.id));
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Planning failed", id: plan.id }, { status: 500 });
-  }
+  after(() => runPlanningInBackground(plan.id));
+
+  return NextResponse.json({ id: plan.id, status: "planning" }, { status: 202 });
 }

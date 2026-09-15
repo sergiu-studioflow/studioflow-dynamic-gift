@@ -11,8 +11,11 @@
 
 import "dotenv/config";
 import { db, schema } from "@/lib/db";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { capabilitiesForClient } from "@/lib/client-capabilities";
+
+// Same rule as capabilitiesForClient: a blank image URL is no image.
+const hasImage = sql`nullif(btrim(${schema.clientProducts.imageUrl}), '') is not null`;
 
 // What the hardcoded arrays in portal-sidebar.tsx used to show. Any brand where
 // the new verdict differs is reported explicitly — the lists were hand-kept and
@@ -61,7 +64,7 @@ async function main() {
       db
         .select({ n })
         .from(schema.clientProducts)
-        .where(and(eq(schema.clientProducts.clientId, b.id), isNotNull(schema.clientProducts.imageUrl))),
+        .where(and(eq(schema.clientProducts.clientId, b.id), hasImage)),
       db.select({ n }).from(schema.clientProducts).where(eq(schema.clientProducts.clientId, b.id)),
       db.select({ n }).from(schema.clientCompetitors).where(eq(schema.clientCompetitors.clientId, b.id)),
     ]);
@@ -112,7 +115,7 @@ async function main() {
       .where(
         and(
           eq(schema.clientProducts.clientId, brands.find((b) => b.slug === slug)!.id),
-          isNotNull(schema.clientProducts.imageUrl)
+          hasImage
         )
       );
     const canReallyProduce = cfg.n > 0 && withImage.n > 0;

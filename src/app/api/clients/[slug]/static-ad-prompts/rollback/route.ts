@@ -1,5 +1,7 @@
 /**
- * One-click rollback: restore a brand's live prompts from a prior published job.
+ * One-click rollback: restore a brand's live prompts from a prior published job,
+ * or from a snapshot of the prompts a publish replaced (e.g. the hand-authored
+ * originals).
  *
  * The safety net for publishing. A published draft that turns out worse in
  * practice is reversible without anyone hand-editing a FIXED prompt.
@@ -15,7 +17,7 @@ export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ slug: string }> };
 
-/** POST { jobId } — restore the brand's live prompts from a prior published job. */
+/** POST { jobId } — restore the brand's live prompts from a published job or snapshot. */
 export async function POST(req: NextRequest, { params }: Params) {
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
@@ -34,6 +36,11 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (!client) return NextResponse.json({ error: "Brand not found" }, { status: 404 });
 
   const ok = await rollbackToJob(client.id, jobId);
-  if (!ok) return NextResponse.json({ error: "Job has no prompts to restore" }, { status: 400 });
+  if (!ok) {
+    return NextResponse.json(
+      { error: "Only a published version or a saved earlier version of this brand's prompts can be restored" },
+      { status: 400 }
+    );
+  }
   return NextResponse.json({ ok: true });
 }

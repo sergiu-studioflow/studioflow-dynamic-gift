@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
+import { toClient, type Client } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Client not found" }, { status: 404 });
   }
 
-  return NextResponse.json(client);
+  return NextResponse.json<Client>(toClient(client));
 }
 
 /**
@@ -54,7 +55,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Client not found" }, { status: 404 });
   }
 
-  return NextResponse.json(updated);
+  return NextResponse.json<Client>(toClient(updated));
 }
 
 /**

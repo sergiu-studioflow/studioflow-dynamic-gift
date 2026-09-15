@@ -19,18 +19,44 @@ export default function MonthlyPlanningPage() {
   const [plans, setPlans] = useState<MonthlyPlan[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    const res = await fetch("/api/monthly-planning/plans");
-    if (res.ok) setPlans(await res.json());
-    setLoading(false);
-  }, []);
+  const [reloadKey, setReloadKey] = useState(0);
+  const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
-  useEffect(() => { if (!selectedId) load(); }, [selectedId, load]);
+  useEffect(() => {
+    if (selectedId) return;
+    let cancelled = false;
+    fetch("/api/monthly-planning/plans")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: MonthlyPlan[] | null) => {
+        if (!cancelled && data) setPlans(data);
+      })
+      .catch(() => {
+        // Keep the last list; the next load tries again.
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, reloadKey]);
+
+  // Plans still planning in the background flip to "Plan ready" on their own.
+  useEffect(() => {
+    if (selectedId || !plans.some((p) => p.status === "planning")) return;
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, [selectedId, plans, load]);
 
   async function del(id: string) {
-    if (!confirm("Delete this plan? (Scheduled posts stay in the Post Scheduler.)")) return;
-    const res = await fetch(`/api/monthly-planning/plans/${id}`, { method: "DELETE" });
-    if (!res.ok) { const d = await res.json(); alert(d.error || "Failed to delete"); return; }
+    if (!confirm("Delete this plan and its briefs? Posts it already scheduled must be unscheduled or cancelled in the Post Scheduler first.")) return;
+    try {
+      const res = await fetch(`/api/monthly-planning/plans/${id}`, { method: "DELETE" });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.error || "Failed to delete"); return; }
+    } catch {
+      alert("Couldn't reach the server — try again.");
+      return;
+    }
     load();
   }
 

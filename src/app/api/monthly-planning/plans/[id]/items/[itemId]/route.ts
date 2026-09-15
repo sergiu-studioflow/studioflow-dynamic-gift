@@ -1,25 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { generateBrief } from "@/lib/monthly-planning/briefs";
+import { QC_HELD } from "@/lib/qc/gate";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120; // regenerate_brief / retry may run one brief call inline
+
+/** A 'briefing' item this old was left behind by a regenerate call that died. */
+const BRIEFING_STALE_MS = 10 * 60_000;
 
 /**
  * PATCH /api/monthly-planning/plans/[id]/items/[itemId]
- * Actions: edit_item | edit_brief | regenerate_brief | skip
+ * Actions: edit_item | edit_brief | regenerate_brief | retry | skip
  */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string; itemId: string }> }) {
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
   if (auth.portalUser.role === "viewer") return NextResponse.json({ error: "Insufficient permissions" }, { status: 403 });
-  const { itemId } = await params;
+  const { id: planId, itemId } = await params;
   const body = await req.json().catch(() => ({}));
 
   const [item] = await db.select().from(schema.planItems).where(eq(schema.planItems.id, itemId)).limit(1);
-  if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!item || item.planId !== planId) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const locked = ["producing", "generated", "scheduled"].includes(item.status);
 
@@ -54,6 +58,61 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     await db.update(schema.planItems).set({ status: "briefing", updatedAt: new Date() }).where(eq(schema.planItems.id, itemId));
     await generateBrief({ ...item, status: "briefing" });
     const [row] = await db.select().from(schema.planItems).where(eq(schema.planItems.id, itemId)).limit(1);
+    return NextResponse.json(row);
+  }
+
+  // Retry a failed slot at any plan stage. Resumes scheduling when the ad already exists
+  // and isn't held; otherwise produces it again from its brief (regenerating a missing
+  // brief first). Re-opens a finished plan so the stepper picks the slot back up.
+  if (body.action === "retry") {
+    const staleBriefing = item.status === "briefing" && item.updatedAt.getTime() < Date.now() - BRIEFING_STALE_MS;
+    // A static slot left 'generated' by the old QC release path never got scheduled.
+    const strandedStatic = item.status === "generated" && item.assetType === "static" && !!item.generationId;
+    if (item.status !== "error" && !staleBriefing && !strandedStatic) {
+      return NextResponse.json({ error: "Only failed slots can be retried." }, { status: 409 });
+    }
+    const [plan] = await db.select().from(schema.monthlyPlans).where(eq(schema.monthlyPlans.id, planId)).limit(1);
+    if (!plan) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+    if (plan.status === "planning") return NextResponse.json({ error: "The plan is still being planned." }, { status: 409 });
+
+    let nextStatus: "producing" | "brief_ready" | null = null;
+    let generationId = item.generationId;
+    if (item.assetType === "static" && item.generationId) {
+      const [gen] = await db
+        .select({ status: schema.staticAdGenerations.status, imageUrl: schema.staticAdGenerations.imageUrl, qcStatus: schema.staticAdGenerations.qcStatus })
+        .from(schema.staticAdGenerations)
+        .where(eq(schema.staticAdGenerations.id, item.generationId))
+        .limit(1);
+      const usable = !!gen && (gen.status === "completed" || gen.status === "complete") && !!gen.imageUrl && !QC_HELD.includes(gen.qcStatus);
+      if (usable) nextStatus = "producing";
+      else generationId = null;
+    }
+
+    if (!nextStatus) {
+      const [brief] = await db.select({ id: schema.planBriefs.id }).from(schema.planBriefs).where(eq(schema.planBriefs.planItemId, itemId)).limit(1);
+      if (!brief) {
+        await db.update(schema.planItems).set({ status: "briefing", generationId: null, errorMessage: null, updatedAt: new Date() }).where(eq(schema.planItems.id, itemId));
+        await generateBrief({ ...item, status: "briefing", generationId: null });
+        const [refreshed] = await db.select().from(schema.planItems).where(eq(schema.planItems.id, itemId)).limit(1);
+        if (refreshed?.status !== "brief_ready") {
+          return NextResponse.json({ error: refreshed?.errorMessage || "Brief generation failed" }, { status: 502 });
+        }
+      }
+      nextStatus = "brief_ready";
+    }
+
+    const [row] = await db
+      .update(schema.planItems)
+      .set({ status: nextStatus, generationId, errorMessage: null, updatedAt: new Date() })
+      .where(eq(schema.planItems.id, itemId))
+      .returning();
+
+    if (plan.status === "complete" || plan.status === "scheduled") {
+      await db
+        .update(schema.monthlyPlans)
+        .set({ status: "producing", updatedAt: new Date() })
+        .where(and(eq(schema.monthlyPlans.id, planId), eq(schema.monthlyPlans.status, plan.status)));
+    }
     return NextResponse.json(row);
   }
 

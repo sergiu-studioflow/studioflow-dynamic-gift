@@ -23,7 +23,50 @@ import {
   TestTubes,
   MousePointerClick,
 } from "lucide-react";
+import { QcBadge } from "@/components/qc/review-scorecard";
 import type { GeneratedAdCopy } from "@/lib/types";
+
+/** A concept as GET /api/ad-copy/[id] returns it, including its Quality Control state. */
+export type ConceptRow = GeneratedAdCopy & { qcStatus?: string | null; qcReviewId?: string | null };
+
+type TextItem = { text: string; charCount: number | null; variant: string | null };
+
+const TEXT_KEYS = ["text", "headline", "description", "hook", "value", "content", "label"];
+
+/**
+ * The jsonb columns n8n writes are not reliably shaped: headlines/descriptions/hook_lines are
+ * usually [{text, char_count}] but have also arrived as plain strings, a single string, or
+ * objects without `text` — and `h.text.length` on those crashed the whole library.
+ */
+function toTextItems(value: unknown): TextItem[] {
+  const list = Array.isArray(value) ? value : value == null || value === "" ? [] : [value];
+  return list
+    .map((item): TextItem | null => {
+      if (item == null) return null;
+      if (typeof item !== "object") {
+        const text = String(item).trim();
+        return text ? { text, charCount: null, variant: null } : null;
+      }
+      const obj = item as Record<string, unknown>;
+      const key = TEXT_KEYS.find((k) => typeof obj[k] === "string" && (obj[k] as string).trim());
+      if (!key) return null;
+      const count = Number(obj.char_count ?? obj.charCount);
+      const variant = obj.length_variant ?? obj.lengthVariant ?? obj.variant;
+      return {
+        text: (obj[key] as string).trim(),
+        charCount: Number.isFinite(count) && count > 0 ? count : null,
+        variant: typeof variant === "string" && variant ? variant : null,
+      };
+    })
+    .filter((item): item is TextItem => item !== null);
+}
+
+/** angles_used: normally a string array, sometimes a comma-separated string. */
+function toStringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((v) => (typeof v === "string" ? v : toTextItems([v])[0]?.text ?? "")).filter(Boolean);
+  if (typeof value === "string") return value.split(",").map((v) => v.trim()).filter(Boolean);
+  return [];
+}
 
 const STATUS_STYLES: Record<string, string> = {
   new: "text-blue-600 dark:text-blue-400",
@@ -40,7 +83,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 type AdCopyConceptCardProps = {
-  concept: GeneratedAdCopy;
+  concept: ConceptRow;
   onStatusChange: (conceptId: string, newStatus: string) => void;
 };
 
@@ -48,9 +91,13 @@ function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable (permissions / insecure context) */
+    }
   }
 
   return (
@@ -107,10 +154,10 @@ export function AdCopyConceptCard({ concept, onStatusChange }: AdCopyConceptCard
     setUpdating(false);
   }
 
-  const anglesUsed = (concept.anglesUsed || []) as string[];
-  const headlines = (concept.headlines || []) as { text: string; char_count: number }[];
-  const descriptions = (concept.descriptions || []) as { text: string; char_count: number }[];
-  const hookLines = (concept.hookLines || []) as { text: string; length_variant: string }[];
+  const anglesUsed = [...new Set(toStringList(concept.anglesUsed))];
+  const headlines = toTextItems(concept.headlines);
+  const descriptions = toTextItems(concept.descriptions);
+  const hookLines = toTextItems(concept.hookLines);
 
   return (
     <Card
@@ -130,6 +177,8 @@ export function AdCopyConceptCard({ concept, onStatusChange }: AdCopyConceptCard
             {concept.conceptName && (
               <span className="text-sm font-bold text-foreground">{concept.conceptName}</span>
             )}
+            {/* "QC…" only for concepts actually queued for grading — older ones never were. */}
+            <QcBadge qcStatus={concept.qcStatus === "pending" && !concept.qcReviewId ? null : concept.qcStatus} />
             {anglesUsed.map((a) => (
               <Badge
                 key={a}
@@ -243,7 +292,7 @@ export function AdCopyConceptCard({ concept, onStatusChange }: AdCopyConceptCard
                     >
                       <span className="text-sm text-foreground font-medium">{h.text}</span>
                       <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-                        <CharBadge count={h.char_count || h.text.length} max={40} />
+                        <CharBadge count={h.charCount ?? h.text.length} max={40} />
                         <CopyButton text={h.text} />
                       </div>
                     </div>
@@ -267,7 +316,7 @@ export function AdCopyConceptCard({ concept, onStatusChange }: AdCopyConceptCard
                     >
                       <span className="text-sm text-foreground">{d.text}</span>
                       <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-                        <CharBadge count={d.char_count || d.text.length} max={30} />
+                        <CharBadge count={d.charCount ?? d.text.length} max={30} />
                         <CopyButton text={d.text} />
                       </div>
                     </div>
@@ -290,9 +339,11 @@ export function AdCopyConceptCard({ concept, onStatusChange }: AdCopyConceptCard
                       className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/30 px-3 py-2"
                     >
                       <div className="flex-1">
-                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mr-2">
-                          {h.length_variant}
-                        </span>
+                        {h.variant ? (
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mr-2">
+                            {h.variant}
+                          </span>
+                        ) : null}
                         <span className="text-sm text-foreground">{h.text}</span>
                       </div>
                       <CopyButton text={h.text} />

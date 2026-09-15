@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { ResearchBrief } from "@/lib/types";
+import { BRIEF_STALE_MS } from "@/components/competitor-ads/use-source-brief";
 
 const mediaTypeIcons: Record<string, typeof Video> = {
   video: Video,
@@ -39,6 +40,63 @@ const funnelColors: Record<string, string> = {
   MOF: "bg-amber-500/10 text-amber-500 border-amber-500/20",
   BOF: "bg-green-500/10 text-green-500 border-green-500/20",
 };
+
+// ── Normalising the n8n brief ────────────────────────────────────────────────
+// The brief comes from an LLM via n8n: keys may be snake_case or camelCase,
+// lists may arrive as strings, and fields may only exist in full_brief.
+
+type Obj = Record<string, unknown>;
+
+const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** First present value among keys (either casing). */
+function pick(obj: Obj | null | undefined, ...keys: string[]): unknown {
+  if (!obj) return undefined;
+  for (const key of keys) {
+    const v = obj[key];
+    if (v !== undefined && v !== null && v !== "") return v;
+  }
+  return undefined;
+}
+
+/** Render-safe text for any JSON value. */
+function toText(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "string") return v.trim() || null;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) {
+    const parts = v.map(toText).filter((s): s is string => !!s);
+    return parts.length ? parts.join("\n") : null;
+  }
+  if (isObj(v)) {
+    const inner = pick(v, "text", "value", "hook", "description", "content");
+    return typeof inner === "string" ? inner : JSON.stringify(v);
+  }
+  return null;
+}
+
+/** A list of strings from an array, or from a newline / bullet separated string. */
+function toList(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(toText).filter((s): s is string => !!s);
+  if (typeof v === "string") {
+    return v
+      .split(/\n+/)
+      .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "").trim())
+      .filter(Boolean);
+  }
+  const text = toText(v);
+  return text ? [text] : [];
+}
+
+/** Object rows from an array (or a single object); anything else comes back as text. */
+function toRows(v: unknown): { rows: Obj[]; text: string | null } {
+  if (Array.isArray(v)) {
+    const rows = v.filter(isObj);
+    return { rows, text: toText(v.filter((item) => !isObj(item))) };
+  }
+  if (isObj(v)) return { rows: [v], text: null };
+  return { rows: [], text: toText(v) };
+}
 
 function Section({
   title,
@@ -80,7 +138,7 @@ function Field({ label, value }: { label: string; value: string | null | undefin
       <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-0.5">
         {label}
       </dt>
-      <dd className="text-sm text-foreground">{value}</dd>
+      <dd className="text-sm text-foreground whitespace-pre-line">{value}</dd>
     </div>
   );
 }
@@ -92,18 +150,39 @@ export default function BriefDetailPage() {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
+  // Still "generating" long after it started: the n8n callback never came.
+  const [stalled, setStalled] = useState(false);
+
+  const fetchBrief = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/research-briefs/${params.id}`);
+      if (res.ok) {
+        const data: ResearchBrief = await res.json();
+        setBrief(data);
+        setStalled(
+          data.status === "generating" && Date.now() - new Date(data.createdAt).getTime() > BRIEF_STALE_MS
+        );
+      } else if (res.status === 404) {
+        setBrief(null);
+      }
+    } catch {
+      // network blip — keep what we have; the next poll retries
+    } finally {
+      setLoading(false);
+    }
+  }, [params.id]);
 
   useEffect(() => {
-    async function fetchBrief() {
-      try {
-        const res = await fetch(`/api/research-briefs/${params.id}`);
-        if (res.ok) setBrief(await res.json());
-      } finally {
-        setLoading(false);
-      }
-    }
     fetchBrief();
-  }, [params.id]);
+  }, [fetchBrief]);
+
+  // Keep checking while n8n is still writing the brief.
+  const isGenerating = brief?.status === "generating";
+  useEffect(() => {
+    if (!isGenerating || stalled) return;
+    const interval = setInterval(fetchBrief, 5000);
+    return () => clearInterval(interval);
+  }, [isGenerating, stalled, fetchBrief]);
 
   async function handleDelete() {
     if (!confirm("Delete this brief? This cannot be undone.")) return;
@@ -148,15 +227,67 @@ export default function BriefDetailPage() {
     );
   }
 
+  if (brief.status === "generating") {
+    return (
+      <div className="space-y-6">
+        <Link href="/research-briefs" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft className="h-4 w-4" /> Back to briefs
+        </Link>
+        <div className="rounded-xl border border-border bg-card p-8 text-center">
+          {stalled ? (
+            <AlertCircle className="h-8 w-8 text-amber-500 mx-auto mb-3" />
+          ) : (
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-3" />
+          )}
+          <h3 className="font-semibold text-foreground mb-1">
+            {stalled ? "This brief is taking much longer than expected" : "Generating brief…"}
+          </h3>
+          <p className="text-sm text-muted-foreground max-w-md mx-auto">
+            {stalled
+              ? "The brief generator hasn't reported back in over 30 minutes, so it has most likely failed. Delete this brief and generate it again from the ad or post."
+              : "This usually takes a minute or two. This page updates automatically."}
+          </p>
+          {stalled && (
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="mt-4 inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+            >
+              {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              Delete brief
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const full = isObj(brief.fullBrief) ? brief.fullBrief : null;
+  // Prefer the stored column; fall back to the raw brief (either key casing).
+  const get = (column: unknown, snake: string, camel: string) =>
+    column !== null && column !== undefined && column !== "" ? column : pick(full, snake, camel);
+
   const MediaIcon = mediaTypeIcons[brief.mediaType] || FileText;
-  const shotList = brief.shotList as Array<{ timecode: string; shot: string; description: string; onScreenText?: string }> | null;
-  const visualComp = brief.visualComposition as { layout: string; colorPalette: string; typography: string; hierarchy: string } | null;
-  const cardDirs = brief.cardDirections as Array<{ cardNumber: number; angle: string; visual: string; copy: string; cta: string }> | null;
-  const onScreenText = brief.onScreenText as Array<{ text: string; timing: string; placement: string; style?: string }> | null;
-  const hookVariations = brief.hookVariations as string[] | null;
-  const complianceReqs = brief.complianceRequirements as string[] | null;
-  const lockedEls = brief.lockedElements as string[] | null;
-  const variableEls = brief.variableElements as string[] | null;
+  const title = toText(brief.title) || "Untitled Brief";
+  const funnelStage = toText(get(brief.funnelStage, "funnel_stage", "funnelStage"));
+  const creativeFormat = toText(get(brief.creativeFormat, "creative_format", "creativeFormat"));
+  const strategicHypothesis = toText(get(brief.strategicHypothesis, "strategic_hypothesis", "strategicHypothesis"));
+  const psychologyAngle = toText(get(brief.psychologyAngle, "psychology_angle", "psychologyAngle"));
+  const targetPersona = toText(get(brief.targetPersona, "target_persona", "targetPersona"));
+  const primaryHook = toText(get(brief.primaryHook, "primary_hook", "primaryHook"));
+  const visualDirection = toText(get(brief.visualDirection, "visual_direction", "visualDirection"));
+  const audioDirection = toText(get(brief.audioDirection, "audio_direction", "audioDirection"));
+  const brandVoiceLock = toText(get(brief.brandVoiceLock, "brand_voice_lock", "brandVoiceLock"));
+  const hookVariations = toList(get(brief.hookVariations, "hook_variations", "hookVariations"));
+  const shotList = toRows(get(brief.shotList, "shot_list", "shotList"));
+  const visualCompRaw = get(brief.visualComposition, "visual_composition", "visualComposition");
+  const visualComp = isObj(visualCompRaw) ? visualCompRaw : null;
+  const visualCompText = visualComp ? null : toText(visualCompRaw);
+  const cardDirs = toRows(get(brief.cardDirections, "card_directions", "cardDirections"));
+  const onScreenText = toRows(get(brief.onScreenText, "on_screen_text", "onScreenText"));
+  const complianceReqs = toList(get(brief.complianceRequirements, "compliance_requirements", "complianceRequirements"));
+  const lockedEls = toList(get(brief.lockedElements, "locked_elements", "lockedElements"));
+  const variableEls = toList(get(brief.variableElements, "variable_elements", "variableElements"));
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -184,19 +315,19 @@ export default function BriefDetailPage() {
           <div className="rounded-lg bg-muted p-2">
             <MediaIcon className="h-5 w-5 text-muted-foreground" />
           </div>
-          {brief.funnelStage && (
-            <Badge variant="outline" className={funnelColors[brief.funnelStage] || ""}>
-              {brief.funnelStage}
+          {funnelStage && (
+            <Badge variant="outline" className={funnelColors[funnelStage] || ""}>
+              {funnelStage}
             </Badge>
           )}
-          {brief.creativeFormat && (
-            <Badge variant="outline">{brief.creativeFormat}</Badge>
+          {creativeFormat && (
+            <Badge variant="outline">{creativeFormat}</Badge>
           )}
           <Badge variant="outline" className="text-muted-foreground">
             {brief.mediaType}
           </Badge>
         </div>
-        <h1 className="text-2xl font-bold text-foreground">{brief.title}</h1>
+        <h1 className="text-2xl font-bold text-foreground">{title}</h1>
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1">
             <Target className="h-3 w-3" />
@@ -206,7 +337,7 @@ export default function BriefDetailPage() {
             <Clock className="h-3 w-3" />
             {new Date(brief.createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
           </span>
-          {brief.generationDurationMs && (
+          {typeof brief.generationDurationMs === "number" && brief.generationDurationMs > 0 && (
             <span>Generated in {(brief.generationDurationMs / 1000).toFixed(1)}s</span>
           )}
         </div>
@@ -214,15 +345,15 @@ export default function BriefDetailPage() {
 
       {/* Strategic Foundation */}
       <Section title="Strategic Foundation" icon={Brain}>
-        <Field label="Strategic Hypothesis" value={brief.strategicHypothesis} />
-        <Field label="Psychology Angle" value={brief.psychologyAngle} />
-        <Field label="Target Persona" value={brief.targetPersona} />
+        <Field label="Strategic Hypothesis" value={strategicHypothesis} />
+        <Field label="Psychology Angle" value={psychologyAngle} />
+        <Field label="Target Persona" value={targetPersona} />
       </Section>
 
       {/* Hooks */}
       <Section title="Hooks" icon={Sparkles}>
-        <Field label="Primary Hook" value={brief.primaryHook} />
-        {hookVariations && hookVariations.length > 0 && (
+        <Field label="Primary Hook" value={primaryHook} />
+        {hookVariations.length > 0 && (
           <div>
             <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
               Hook Variations
@@ -243,10 +374,10 @@ export default function BriefDetailPage() {
 
       {/* Creative Direction (conditional on media type) */}
       <Section title="Creative Direction" icon={Eye}>
-        <Field label="Visual Direction" value={brief.visualDirection} />
+        <Field label="Visual Direction" value={visualDirection} />
 
         {/* Video: Shot List */}
-        {shotList && shotList.length > 0 && (
+        {shotList.rows.length > 0 && (
           <div>
             <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
               Shot List
@@ -262,12 +393,16 @@ export default function BriefDetailPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {shotList.map((shot, i) => (
+                  {shotList.rows.map((shot, i) => (
                     <tr key={i} className="border-b border-border/50 last:border-0">
-                      <td className="px-3 py-2 font-mono text-xs text-primary whitespace-nowrap">{shot.timecode}</td>
-                      <td className="px-3 py-2 font-medium">{shot.shot}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{shot.description}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{shot.onScreenText || "—"}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-primary whitespace-nowrap">
+                        {toText(pick(shot, "timecode", "time_code", "timeCode", "timestamp", "time")) || "—"}
+                      </td>
+                      <td className="px-3 py-2 font-medium">{toText(pick(shot, "shot", "shot_type", "shotType", "type")) || "—"}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{toText(pick(shot, "description", "action", "details"))}</td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {toText(pick(shot, "on_screen_text", "onScreenText", "text_overlay", "textOverlay")) || "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -275,71 +410,84 @@ export default function BriefDetailPage() {
             </div>
           </div>
         )}
+        <Field label="Shot List" value={shotList.text} />
 
         {/* Static: Visual Composition */}
         {visualComp && (
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Layout" value={visualComp.layout} />
-            <Field label="Color Palette" value={visualComp.colorPalette} />
-            <Field label="Typography" value={visualComp.typography} />
-            <Field label="Visual Hierarchy" value={visualComp.hierarchy} />
+            <Field label="Layout" value={toText(pick(visualComp, "layout"))} />
+            <Field label="Color Palette" value={toText(pick(visualComp, "color_palette", "colorPalette", "palette", "colors"))} />
+            <Field label="Typography" value={toText(pick(visualComp, "typography", "fonts"))} />
+            <Field label="Visual Hierarchy" value={toText(pick(visualComp, "hierarchy", "visual_hierarchy", "visualHierarchy"))} />
           </div>
         )}
+        <Field label="Visual Composition" value={visualCompText} />
 
         {/* Carousel: Card Directions */}
-        {cardDirs && cardDirs.length > 0 && (
+        {cardDirs.rows.length > 0 && (
           <div>
             <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
               Card-by-Card Direction
             </dt>
             <div className="space-y-3">
-              {cardDirs.map((card, i) => (
+              {cardDirs.rows.map((card, i) => (
                 <div key={i} className="rounded-lg border border-border p-3 space-y-1.5">
-                  <div className="text-xs font-semibold text-primary">Card {card.cardNumber}</div>
-                  <Field label="Angle" value={card.angle} />
-                  <Field label="Visual" value={card.visual} />
-                  <Field label="Copy" value={card.copy} />
-                  <Field label="CTA" value={card.cta} />
+                  <div className="text-xs font-semibold text-primary">
+                    Card {toText(pick(card, "card_number", "cardNumber", "card", "number")) || i + 1}
+                  </div>
+                  <Field label="Angle" value={toText(pick(card, "angle"))} />
+                  <Field label="Visual" value={toText(pick(card, "visual", "visual_direction", "visualDirection"))} />
+                  <Field label="Copy" value={toText(pick(card, "copy", "text", "headline"))} />
+                  <Field label="CTA" value={toText(pick(card, "cta", "call_to_action", "callToAction"))} />
                 </div>
               ))}
             </div>
           </div>
         )}
+        <Field label="Card-by-Card Direction" value={cardDirs.text} />
 
         {/* On-Screen Text */}
-        {onScreenText && onScreenText.length > 0 && (
+        {onScreenText.rows.length > 0 && (
           <div>
             <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
               On-Screen Text Overlays
             </dt>
             <div className="space-y-2">
-              {onScreenText.map((item, i) => (
-                <div key={i} className="flex items-start gap-3 text-sm">
-                  <Type className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-                  <div>
-                    <span className="font-medium">&ldquo;{item.text}&rdquo;</span>
-                    <span className="text-muted-foreground"> — {item.timing}, {item.placement}</span>
-                    {item.style && <span className="text-muted-foreground/60"> ({item.style})</span>}
+              {onScreenText.rows.map((item, i) => {
+                const timing = toText(pick(item, "timing", "timecode", "time"));
+                const placement = toText(pick(item, "placement", "position"));
+                const style = toText(pick(item, "style"));
+                return (
+                  <div key={i} className="flex items-start gap-3 text-sm">
+                    <Type className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                    <div>
+                      <span className="font-medium">&ldquo;{toText(pick(item, "text", "copy")) || "—"}&rdquo;</span>
+                      {(timing || placement) && (
+                        <span className="text-muted-foreground"> — {[timing, placement].filter(Boolean).join(", ")}</span>
+                      )}
+                      {style && <span className="text-muted-foreground/60"> ({style})</span>}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
+        <Field label="On-Screen Text Overlays" value={onScreenText.text} />
       </Section>
 
       {/* Audio & Voice */}
-      {(brief.audioDirection || brief.brandVoiceLock) && (
+      {(audioDirection || brandVoiceLock) && (
         <Section title="Audio & Voice" icon={Volume2}>
-          <Field label="Audio Direction" value={brief.audioDirection} />
-          <Field label="Brand Voice Lock" value={brief.brandVoiceLock} />
+          <Field label="Audio Direction" value={audioDirection} />
+          <Field label="Brand Voice Lock" value={brandVoiceLock} />
         </Section>
       )}
 
       {/* Execution Guide */}
-      {((lockedEls && lockedEls.length > 0) || (variableEls && variableEls.length > 0)) && (
+      {(lockedEls.length > 0 || variableEls.length > 0) && (
         <Section title="Execution Guide" icon={Lock}>
-          {lockedEls && lockedEls.length > 0 && (
+          {lockedEls.length > 0 && (
             <div>
               <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
                 <Lock className="h-3 w-3" /> Locked Elements (Must Replicate)
@@ -353,7 +501,7 @@ export default function BriefDetailPage() {
               </div>
             </div>
           )}
-          {variableEls && variableEls.length > 0 && (
+          {variableEls.length > 0 && (
             <div>
               <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
                 <Unlock className="h-3 w-3" /> Variable Elements (Adapt for Brand)
@@ -371,7 +519,7 @@ export default function BriefDetailPage() {
       )}
 
       {/* Compliance */}
-      {complianceReqs && complianceReqs.length > 0 && (
+      {complianceReqs.length > 0 && (
         <Section title="Compliance" icon={Shield} defaultOpen={false}>
           <ul className="space-y-1.5">
             {complianceReqs.map((req, i) => (

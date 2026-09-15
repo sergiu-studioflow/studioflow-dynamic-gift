@@ -163,7 +163,7 @@ export function ProfileManagement({
       // Update local state optimistically
       setProfiles((prev) =>
         prev.map((p) =>
-          p.id === profileId ? { ...p, trackingStatus: "Processing" as const } : p
+          p.id === profileId ? { ...p, trackingStatus: "Processing" as const, processingStale: false } : p
         )
       );
 
@@ -326,8 +326,17 @@ export function ProfileManagement({
       {/* Profiles list */}
       <div className="space-y-3">
         {profiles.map((profile) => {
-          const statusConf = STATUS_CONFIG[profile.trackingStatus] || STATUS_CONFIG["Not Initialized"];
-          const isProcessing = profile.trackingStatus === "Processing" || initializingId === profile.id;
+          // Processing far longer than a scrape takes: the scraper died, so offer a retry.
+          const stalled =
+            profile.trackingStatus === "Processing" && !!profile.processingStale && initializingId !== profile.id;
+          const statusConf = stalled
+            ? { variant: "destructive" as const, label: "Stalled" }
+            : STATUS_CONFIG[profile.trackingStatus] || STATUS_CONFIG["Not Initialized"];
+          const isProcessing =
+            (profile.trackingStatus === "Processing" && !stalled) || initializingId === profile.id;
+          const canInitialize =
+            !isProcessing &&
+            (profile.trackingStatus === "Not Initialized" || profile.trackingStatus === "Error" || stalled);
           const usernameDisplay = profile.username
             ? `@${profile.username}`
             : parseUsernameFromUrl(profile.profileUrl)
@@ -400,8 +409,8 @@ export function ProfileManagement({
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  {/* Action button based on status */}
-                  {profile.trackingStatus === "Not Initialized" && (
+                  {/* Action button based on status — the post-count picker serves Initialize and Retry */}
+                  {canInitialize && (
                     <div className="relative">
                       {initPostCount === profile.id ? (
                         <div className="flex items-center gap-1.5">
@@ -421,13 +430,21 @@ export function ProfileManagement({
                             ×
                           </button>
                         </div>
-                      ) : (
+                      ) : profile.trackingStatus === "Not Initialized" ? (
                         <button
                           onClick={() => setInitPostCount(profile.id)}
                           className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                         >
                           <Play className="h-3.5 w-3.5" />
                           Initialize
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setInitPostCount(profile.id)}
+                          title={stalled ? "No result after 2 hours — the scrape most likely failed" : undefined}
+                          className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/20 dark:text-red-400 dark:hover:bg-red-500/10"
+                        >
+                          Retry
                         </button>
                       )}
                     </div>
@@ -466,15 +483,6 @@ export function ProfileManagement({
                           profile.trackingStatus === "Active" ? "left-[22px]" : "left-0.5"
                         }`}
                       />
-                    </button>
-                  )}
-
-                  {profile.trackingStatus === "Error" && (
-                    <button
-                      onClick={() => setInitPostCount(profile.id)}
-                      className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/20 dark:text-red-400 dark:hover:bg-red-500/10"
-                    >
-                      Retry
                     </button>
                   )}
 

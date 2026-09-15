@@ -12,15 +12,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { BrandSelect } from "@/components/shared/brand-select";
+import { useClient } from "@/lib/client-context";
 import { Loader2, Sparkles } from "lucide-react";
 
 const CONTENT_TYPES = [
-  { id: "Review/Testimonial", label: "Review / Testimonial Angles", desc: "Leverage 2,000+ Google reviews" },
+  { id: "Review/Testimonial", label: "Review / Testimonial Angles", desc: "Built on real customer reviews" },
   { id: "Product Features", label: "Product Features with Value Framing", desc: "Use-case driven, not bare announcements" },
   { id: "Behind the Scenes", label: "Behind the Scenes / How It's Made", desc: "Design team, warehouse, production process" },
   { id: "Value Prop Reinforcement", label: "Value Prop Reinforcement", desc: "Speed, price, full-service, concierge" },
   { id: "Educational", label: "Educational Content", desc: "Tips, guides, industry insights" },
-  { id: "Case Study", label: "Case Study / Project Showcase", desc: "Little Mix tour, Red Bull, major projects" },
+  { id: "Case Study", label: "Case Study / Project Showcase", desc: "Real client projects and results" },
 ];
 
 type IdeationFormProps = {
@@ -28,6 +29,7 @@ type IdeationFormProps = {
 };
 
 export function IdeationForm({ onSuccess }: IdeationFormProps) {
+  const { clientId } = useClient();
   const [brand, setBrand] = useState("");
   const [direction, setDirection] = useState("");
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
@@ -82,6 +84,15 @@ export function IdeationForm({ onSuccess }: IdeationFormProps) {
         throw new Error(data.error || "Failed to create request");
       }
 
+      // The request is saved even when generation couldn't be started; say so instead of
+      // announcing a run that isn't happening. It can be retried from the Idea Library.
+      const created = await res.json().catch(() => null);
+      if (created?.status === "error") {
+        throw new Error(
+          `${created.errorMessage || "Generation could not be started."} The request was saved — retry it from the Idea Library.`
+        );
+      }
+
       setSuccess(true);
       setBrand("");
       setDirection("");
@@ -105,7 +116,7 @@ export function IdeationForm({ onSuccess }: IdeationFormProps) {
         {/* Brand Selection */}
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">Brand *</label>
-          <BrandSelect value={brand} onValueChange={setBrand} />
+          <BrandSelect value={brand} onValueChange={setBrand} preselectId={clientId} />
         </div>
 
         {/* Direction */}

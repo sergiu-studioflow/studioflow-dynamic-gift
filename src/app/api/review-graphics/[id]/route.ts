@@ -14,6 +14,8 @@ export const dynamic = "force-dynamic";
  *
  * The human approval gate. Editing captions is allowed in any non-terminal
  * state and keeps the row a draft. Approve/Reject set the terminal state.
+ * Approve is refused (409) while images are still generating or when none
+ * finished — posting needs a completed image.
  */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const authResult = await requireAuth();
@@ -26,7 +28,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json().catch(() => ({}));
 
   const [existing] = await db
-    .select({ id: schema.reviewGraphics.id })
+    .select({ id: schema.reviewGraphics.id, status: schema.reviewGraphics.status })
     .from(schema.reviewGraphics)
     .where(eq(schema.reviewGraphics.id, id))
     .limit(1);
@@ -37,6 +39,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const update: Partial<typeof schema.reviewGraphics.$inferInsert> = { updatedAt: new Date() };
 
   if (body.action === "approve") {
+    const assets = await db
+      .select({ status: schema.reviewGraphicAssets.status })
+      .from(schema.reviewGraphicAssets)
+      .where(eq(schema.reviewGraphicAssets.graphicId, id));
+    if (existing.status === "generating" || assets.some((a) => a.status === "generating")) {
+      return NextResponse.json(
+        { error: "This graphic is still generating — approve it once the images have finished." },
+        { status: 409 }
+      );
+    }
+    if (existing.status === "error" || !assets.some((a) => a.status === "completed")) {
+      return NextResponse.json(
+        { error: "This graphic has no finished images, so it can't be approved. Reject it, or generate it again from the Reviews tab." },
+        { status: 409 }
+      );
+    }
     update.status = "approved";
     update.approvedBy = authResult.portalUser.id;
     update.approvedAt = new Date();

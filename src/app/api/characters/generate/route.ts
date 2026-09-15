@@ -72,17 +72,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Likeness analysis failed: ${msg}`, failedStep: 1 }, { status: 500 });
     }
 
-    // Extract and save physical description from likeness analysis
+    // Extract and save physical description from likeness analysis. The video pipeline
+    // feeds it to the prompt crafter for character consistency.
+    let physicalDescription: string | null = null;
     try {
-      const physicalDescription = await extractPhysicalDescription(likenessJson);
+      physicalDescription = (await extractPhysicalDescription(likenessJson)) || null;
       if (physicalDescription) {
         await db
           .update(schema.characters)
           .set({ description: physicalDescription, updatedAt: new Date() })
           .where(eq(schema.characters.id, characterId));
       }
-    } catch {
-      // Non-critical — continue even if description extraction fails
+    } catch (err) {
+      // Non-critical — the character still generates, but make the failure visible.
+      console.error(
+        `[character-gen] Description extraction failed for ${characterId}:`,
+        err instanceof Error ? err.message : err
+      );
     }
 
     // ── Step 2: Apply realism filter ──
@@ -111,7 +117,10 @@ export async function POST(request: NextRequest) {
       .update(schema.characters)
       .set({
         kieTaskId,
-        description: `${mode === "identical" ? "Identical" : "Likeness"} — generating image...`,
+        // Only the placeholder carries the progress suffix — never overwrite a saved description.
+        ...(physicalDescription
+          ? {}
+          : { description: `${mode === "identical" ? "Identical" : "Likeness"} — generating image...` }),
         updatedAt: new Date(),
       })
       .where(eq(schema.characters.id, characterId));

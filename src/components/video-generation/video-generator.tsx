@@ -46,6 +46,7 @@ type Character = {
   name: string;
   imageUrl: string;
   imagePreviewUrl: string;
+  status?: string;
 };
 
 type Scene = {
@@ -233,7 +234,10 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
   const stepTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const selectedProduct = products.find((p) => p.id === selectedProductId);
-  const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
+  // A character still generating (or failed) still shows its uploaded source photo — only
+  // finished ones can be used as a reference.
+  const readyCharacters = characters.filter((c) => (c.status ?? "ready") === "ready");
+  const selectedCharacter = readyCharacters.find((c) => c.id === selectedCharacterId);
 
   const isAroll = selectedType === "aroll";
   const isBroll = selectedType === "broll";
@@ -277,6 +281,11 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/video-generation/generate/${generationId}`);
+        if (res.status === 404) {
+          setState({ phase: "error", message: "This generation no longer exists" });
+          return;
+        }
+        if (!res.ok) return; // transient — keep polling
         const data = await res.json();
 
         // Capture debug data from every poll
@@ -405,7 +414,7 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
         message: err instanceof Error ? err.message : "Network error",
       });
     }
-  }, [selectedProductId, selectedCharacterId, selectedCharacterIds, selectedSceneId, selectedType, selectedArollStyle, showCharacters, showScenes, isPodcast, productOptional, isAroll, script, selectedLength, selectedSize]);
+  }, [clientId, trackGeneration, selectedProduct, selectedProductId, selectedCharacterId, selectedCharacterIds, selectedSceneId, selectedType, selectedArollStyle, showCharacters, showScenes, isPodcast, productOptional, isAroll, script, selectedLength, selectedSize]);
 
   const resetState = () => {
     stepTimersRef.current.forEach(clearTimeout);
@@ -697,10 +706,12 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
               {characterSectionNum}. {isPodcast ? "Characters" : "Character"} <span className="text-muted-foreground/50 normal-case font-normal">(optional{isPodcast ? ", up to 2" : ""})</span>
             </h3>
           </div>
-          {characters.length === 0 ? (
+          {readyCharacters.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-6 text-muted-foreground/40">
               <Users className="h-8 w-8" />
-              <p className="text-xs text-muted-foreground/60">No characters yet</p>
+              <p className="text-xs text-muted-foreground/60">
+                {characters.length > 0 ? "No finished characters yet" : "No characters yet"}
+              </p>
               <p className="text-[10px] text-muted-foreground/40 text-center max-w-[240px]">
                 Add character references in the Characters tab to use them here.
               </p>
@@ -712,7 +723,7 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
                 <p className="text-[10px] text-primary mb-2">{selectedCharacterIds.length}/2 selected</p>
               )}
               <div className="grid grid-cols-4 gap-2 max-h-[200px] overflow-y-auto pr-1">
-                {characters.map((c) => {
+                {readyCharacters.map((c) => {
                   const isSelected = selectedCharacterIds.includes(c.id);
                   const atMax = selectedCharacterIds.length >= 2 && !isSelected;
                   return (
@@ -769,7 +780,7 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
                   None
                 </span>
               </button>
-              {characters.map((c) => {
+              {readyCharacters.map((c) => {
                 const isSelected = selectedCharacterId === c.id;
                 return (
                   <button

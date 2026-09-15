@@ -11,7 +11,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ChevronDown, ChevronUp, Palette, MessageSquareText, Zap } from "lucide-react";
+import { QcBadge } from "@/components/qc/review-scorecard";
 import type { ContentIdea } from "@/lib/types";
+
+/** An idea as GET /api/ideation/[id] returns it, including its Quality Control state. */
+export type IdeaRow = ContentIdea & { qcStatus?: string | null; qcReviewId?: string | null };
 
 const TYPE_COLORS: Record<string, string> = {
   "Review/Testimonial": "bg-blue-500/15 text-blue-600 dark:text-blue-400",
@@ -36,7 +40,7 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 type IdeaCardProps = {
-  idea: ContentIdea;
+  idea: IdeaRow;
   onStatusChange: (ideaId: string, newStatus: string) => void;
 };
 
@@ -86,6 +90,8 @@ export function IdeaCard({ idea, onStatusChange }: IdeaCardProps) {
             <span className={`text-[11px] font-medium rounded-md px-2 py-0.5 ${platform.className}`}>
               {platform.label}
             </span>
+            {/* "QC…" only for ideas actually queued for grading — older ones never were. */}
+            <QcBadge qcStatus={idea.qcStatus === "pending" && !idea.qcReviewId ? null : idea.qcStatus} />
           </div>
           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
             <Select

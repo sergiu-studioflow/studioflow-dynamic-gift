@@ -25,6 +25,25 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 min timeout for multi-step AI pipeline
 
 /**
+ * Mark the row failed with the provider's real message and return that message to the UI —
+ * a bare "Template formatting failed" hid the actual cause (overload, quota, bad key…).
+ * If the function times out instead, the row stays `pending` until the abandon clock in
+ * lib/video-generation/abandon.ts fails it.
+ */
+async function failStep(generationId: string, step: number, label: string, err: unknown) {
+  const detail = err instanceof Error ? err.message : String(err);
+  await db
+    .update(schema.videoGenerations)
+    .set({ status: "error", errorMessage: `Step ${step} failed: ${detail}`, updatedAt: new Date() })
+    .where(eq(schema.videoGenerations.id, generationId));
+  const shortDetail = detail.length > 400 ? `${detail.slice(0, 400)}…` : detail;
+  return NextResponse.json(
+    { error: `${label}: ${shortDetail}`, failedStep: step, generationId },
+    { status: 500 }
+  );
+}
+
+/**
  * POST /api/video-generation/generate
  *
  * Orchestrates the full video generation pipeline:
@@ -102,6 +121,13 @@ export async function POST(request: NextRequest) {
         if (c.clientId !== clientId) {
           return NextResponse.json({ error: "Character belongs to a different client" }, { status: 403 });
         }
+        // A generating / failed character's image is still the uploaded source photo.
+        if (c.status !== "ready") {
+          return NextResponse.json(
+            { error: `Character "${c.name}" isn't ready yet (${c.status}) — pick another or wait for it to finish.` },
+            { status: 400 }
+          );
+        }
         characterList.push(c);
       }
     }
@@ -166,11 +192,7 @@ export async function POST(request: NextRequest) {
         characterDescriptions,
       });
     } catch (err) {
-      await db
-        .update(schema.videoGenerations)
-        .set({ status: "error", errorMessage: `Step 1 failed: ${err instanceof Error ? err.message : String(err)}`, updatedAt: new Date() })
-        .where(eq(schema.videoGenerations.id, generationId));
-      return NextResponse.json({ error: "Prompt crafting failed", failedStep: 1, generationId }, { status: 500 });
+      return failStep(generationId, 1, "Prompt crafting failed", err);
     }
 
     await db
@@ -183,11 +205,7 @@ export async function POST(request: NextRequest) {
     try {
       studioFlowResult = await generateStudioFlowPrompt(crafterResult);
     } catch (err) {
-      await db
-        .update(schema.videoGenerations)
-        .set({ status: "error", errorMessage: `Step 2 failed: ${err instanceof Error ? err.message : String(err)}`, updatedAt: new Date() })
-        .where(eq(schema.videoGenerations.id, generationId));
-      return NextResponse.json({ error: "Studio Flow prompt generation failed", failedStep: 2, generationId }, { status: 500 });
+      return failStep(generationId, 2, "Studio Flow prompt generation failed", err);
     }
 
     await db
@@ -200,11 +218,7 @@ export async function POST(request: NextRequest) {
     try {
       cleanedResult = await cleanPrompt(studioFlowResult);
     } catch (err) {
-      await db
-        .update(schema.videoGenerations)
-        .set({ status: "error", errorMessage: `Step 3 failed: ${err instanceof Error ? err.message : String(err)}`, updatedAt: new Date() })
-        .where(eq(schema.videoGenerations.id, generationId));
-      return NextResponse.json({ error: "Prompt cleanup failed", failedStep: 3, generationId }, { status: 500 });
+      return failStep(generationId, 3, "Prompt cleanup failed", err);
     }
 
     await db
@@ -238,11 +252,7 @@ export async function POST(request: NextRequest) {
         finalPrompt = await formatProductOnlyTemplate(cleanedResult, aspectRatio, Number(duration));
       }
     } catch (err) {
-      await db
-        .update(schema.videoGenerations)
-        .set({ status: "error", errorMessage: `Step 4 failed: ${err instanceof Error ? err.message : String(err)}`, updatedAt: new Date() })
-        .where(eq(schema.videoGenerations.id, generationId));
-      return NextResponse.json({ error: "Template formatting failed", failedStep: 4, generationId }, { status: 500 });
+      return failStep(generationId, 4, "Template formatting failed", err);
     }
 
     await db
@@ -256,11 +266,7 @@ export async function POST(request: NextRequest) {
       try {
         promptForSeedance = await cleanVoiceDialogue(finalPrompt);
       } catch (err) {
-        await db
-          .update(schema.videoGenerations)
-          .set({ status: "error", errorMessage: `Step 5 failed: ${err instanceof Error ? err.message : String(err)}`, updatedAt: new Date() })
-          .where(eq(schema.videoGenerations.id, generationId));
-        return NextResponse.json({ error: "Voice cleanup failed", failedStep: 5, generationId }, { status: 500 });
+        return failStep(generationId, 5, "Voice cleanup failed", err);
       }
 
       await db
@@ -292,11 +298,7 @@ export async function POST(request: NextRequest) {
         duration: Number(duration),
       });
     } catch (err) {
-      await db
-        .update(schema.videoGenerations)
-        .set({ status: "error", errorMessage: `Step ${seedanceStep} failed: ${err instanceof Error ? err.message : String(err)}`, updatedAt: new Date() })
-        .where(eq(schema.videoGenerations.id, generationId));
-      return NextResponse.json({ error: "Seedance submission failed", failedStep: seedanceStep, generationId }, { status: 500 });
+      return failStep(generationId, seedanceStep, "Seedance submission failed", err);
     }
 
     await db

@@ -9,7 +9,7 @@
 // *_requests parent whose `brand` column holds brands.brand_name), so the text lane
 // resolves the client by exact brand-name match — see resolveTextClientId.
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { parseJsonLoose, isTransient } from "./claude";
 import { fetchAsset, judgeVisual, judgeText } from "./provider";
@@ -100,7 +100,7 @@ const TEXT_KIND_LABELS: Record<string, string> = {
  */
 const TEXT_KEYS = ["text", "headline", "value", "label", "hook", "content"];
 
-function renderValue(v: unknown): string {
+export function renderValue(v: unknown): string {
   if (v == null) return "";
   if (Array.isArray(v)) return v.map(renderValue).filter(Boolean).join(" | ");
   if (typeof v === "object") {
@@ -126,6 +126,52 @@ function fieldsToBody(fields: Array<[string, unknown]>): string {
 
 export type TextPayload = { body: string; clientId: string | null };
 
+// One body per text table — what the judge grades and what a reviewer reads in the QC queue.
+function adCopyBody(c: typeof schema.generatedAdCopy.$inferSelect): string {
+  return fieldsToBody([
+    ["Concept", c.conceptName],
+    ["Strategy", c.conceptStrategy],
+    ["Angles", c.anglesUsed],
+    ["Primary text (short)", c.primaryTextShort],
+    ["Primary text (medium)", c.primaryTextMedium],
+    ["Primary text (long)", c.primaryTextLong],
+    ["Headlines", c.headlines],
+    ["Descriptions", c.descriptions],
+    ["Hooks", c.hookLines],
+    ["CTA", c.ctaRecommendation],
+  ]);
+}
+
+function videoBriefBody(b: typeof schema.generatedVideoBriefs.$inferSelect): string {
+  return fieldsToBody([
+    ["Title", b.briefTitle],
+    ["Strategic hypothesis", b.strategicHypothesis],
+    ["Psychology angle", b.psychologyAngle],
+    ["Persona", b.targetPersona],
+    ["Funnel stage", b.funnelStage],
+    ["Primary hook", b.primaryHook],
+    ["Hook variations", b.hookVariations],
+    ["Full script", b.fullScript],
+    ["Scene breakdown", b.sceneBreakdown],
+    ["On-screen text", b.onScreenText],
+    ["Visual direction", b.visualDirection],
+    ["Brand voice lock", b.brandVoiceLock],
+    ["Value prop focus", b.valuePropFocus],
+  ]);
+}
+
+function ideaBody(i: typeof schema.contentIdeas.$inferSelect): string {
+  return fieldsToBody([
+    ["Hook", i.hook],
+    ["Content type", i.contentType],
+    ["Suggested angle", i.suggestedAngle],
+    ["Visual direction", i.visualDirection],
+    ["Platform", i.platformRecommendation],
+    ["Core value props", i.coreValueProps],
+    ["Copy direction", i.copyDirection],
+  ]);
+}
+
 /**
  * Load a text row's gradable body + resolve its client.
  * Returns body:"" when the row is gone (the pipeline then records an honest failure
@@ -142,22 +188,7 @@ export async function loadTextPayload(sourceSystem: SourceSystem, sourceId: stri
       .where(eq(schema.generatedAdCopy.id, sourceId))
       .limit(1);
     if (!row) return none;
-    const c = row.c;
-    return {
-      clientId: await resolveTextClientId(row.brand),
-      body: fieldsToBody([
-        ["Concept", c.conceptName],
-        ["Strategy", c.conceptStrategy],
-        ["Angles", c.anglesUsed],
-        ["Primary text (short)", c.primaryTextShort],
-        ["Primary text (medium)", c.primaryTextMedium],
-        ["Primary text (long)", c.primaryTextLong],
-        ["Headlines", c.headlines],
-        ["Descriptions", c.descriptions],
-        ["Hooks", c.hookLines],
-        ["CTA", c.ctaRecommendation],
-      ]),
-    };
+    return { clientId: await resolveTextClientId(row.brand), body: adCopyBody(row.c) };
   }
 
   if (sourceSystem === "video_brief") {
@@ -168,25 +199,7 @@ export async function loadTextPayload(sourceSystem: SourceSystem, sourceId: stri
       .where(eq(schema.generatedVideoBriefs.id, sourceId))
       .limit(1);
     if (!row) return none;
-    const b = row.b;
-    return {
-      clientId: await resolveTextClientId(row.brand),
-      body: fieldsToBody([
-        ["Title", b.briefTitle],
-        ["Strategic hypothesis", b.strategicHypothesis],
-        ["Psychology angle", b.psychologyAngle],
-        ["Persona", b.targetPersona],
-        ["Funnel stage", b.funnelStage],
-        ["Primary hook", b.primaryHook],
-        ["Hook variations", b.hookVariations],
-        ["Full script", b.fullScript],
-        ["Scene breakdown", b.sceneBreakdown],
-        ["On-screen text", b.onScreenText],
-        ["Visual direction", b.visualDirection],
-        ["Brand voice lock", b.brandVoiceLock],
-        ["Value prop focus", b.valuePropFocus],
-      ]),
-    };
+    return { clientId: await resolveTextClientId(row.brand), body: videoBriefBody(row.b) };
   }
 
   // ideation
@@ -197,19 +210,45 @@ export async function loadTextPayload(sourceSystem: SourceSystem, sourceId: stri
     .where(eq(schema.contentIdeas.id, sourceId))
     .limit(1);
   if (!row) return none;
-  const i = row.i;
-  return {
-    clientId: await resolveTextClientId(row.brand),
-    body: fieldsToBody([
-      ["Hook", i.hook],
-      ["Content type", i.contentType],
-      ["Suggested angle", i.suggestedAngle],
-      ["Visual direction", i.visualDirection],
-      ["Platform", i.platformRecommendation],
-      ["Core value props", i.coreValueProps],
-      ["Copy direction", i.copyDirection],
-    ]),
-  };
+  return { clientId: await resolveTextClientId(row.brand), body: ideaBody(row.i) };
+}
+
+export type TextSource = { requestId: string | null; body: string };
+
+export const textSourceKey = (sourceSystem: string, sourceId: string) => `${sourceSystem}:${sourceId}`;
+
+/**
+ * The text a set of text-lane reviews is about, for display in the QC queue — so a reviewer
+ * approves or rejects what they can read, not a scorecard alone. One query per text table.
+ * Keyed by textSourceKey(); rows that no longer exist are simply absent.
+ */
+export async function loadTextSources(
+  reviews: Array<{ sourceSystem: string; sourceId: string | null }>
+): Promise<Map<string, TextSource>> {
+  const idsFor = (system: SourceSystem) =>
+    [...new Set(reviews.filter((r) => r.sourceSystem === system && r.sourceId).map((r) => r.sourceId as string))];
+  const out = new Map<string, TextSource>();
+
+  const adCopyIds = idsFor("ad_copy");
+  const briefIds = idsFor("video_brief");
+  const ideaIds = idsFor("ideation");
+
+  const [adCopy, briefs, ideas] = await Promise.all([
+    adCopyIds.length
+      ? db.select().from(schema.generatedAdCopy).where(inArray(schema.generatedAdCopy.id, adCopyIds))
+      : Promise.resolve([]),
+    briefIds.length
+      ? db.select().from(schema.generatedVideoBriefs).where(inArray(schema.generatedVideoBriefs.id, briefIds))
+      : Promise.resolve([]),
+    ideaIds.length
+      ? db.select().from(schema.contentIdeas).where(inArray(schema.contentIdeas.id, ideaIds))
+      : Promise.resolve([]),
+  ]);
+
+  for (const c of adCopy) out.set(textSourceKey("ad_copy", c.id), { requestId: c.requestId, body: adCopyBody(c) });
+  for (const b of briefs) out.set(textSourceKey("video_brief", b.id), { requestId: b.requestId, body: videoBriefBody(b) });
+  for (const i of ideas) out.set(textSourceKey("ideation", i.id), { requestId: i.requestId, body: ideaBody(i) });
+  return out;
 }
 
 // brands.brand_name is unique and the three request routes validate `brand` against it

@@ -18,12 +18,16 @@ export type ReviewCaptions = {
   hashtags: string[];
 };
 
-const SYSTEM_PROMPT = `You are a social media copywriter for a promotional products company that runs multiple brands (Dynamic Gift, Pin Factory, Indigenous Promotions, Promo Superstore, Lanyards Factory, Event Display, The Medal Factory, Inflatable Promotions). Your job: turn real customer reviews into ready-to-post social media captions and pull-quotes for branded testimonial graphics.
+// Each brand writes as itself: the prompt names the selected brand and limits
+// brand facts to its own review + brand intelligence (never a sister brand's).
+function buildSystemPrompt(brandName: string): string {
+  return `You are a social media copywriter for ${brandName}, a promotional products company. Your job: turn real customer reviews of ${brandName} into ready-to-post social media captions and pull-quotes for ${brandName}'s branded testimonial graphics.
 
 # Output rules
 - Output ONLY valid JSON. No markdown. No code fences. No explanation before or after the JSON.
 - Use double quotes for all strings. Escape any internal quotes properly.
-- Do not invent facts, products, or experiences not present in the review.
+- Do not invent facts, products, or experiences not present in the review or in the ${brandName} brand context provided with it.
+- Write only as ${brandName}: when the copy names the business, name ${brandName} — never another brand, including sister brands in the same group. Don't borrow facts, clients, projects, awards, review counts or history from any other brand.
 - Reference the reviewer by their first name only (not full name).
 - Match the tone to the brand: warm, professional, confident. Never sarcastic or overly casual.
 - Use Australian English spelling and idiom.
@@ -39,6 +43,7 @@ const SYSTEM_PROMPT = `You are a social media copywriter for a promotional produ
   "cta": "string — one short call-to-action phrase, max 5 words.",
   "hashtags": ["array of 5 to 8 relevant hashtag strings WITHOUT the # symbol"]
 }`;
+}
 
 /** Strip markdown code fences and parse the first JSON object in the text. */
 function parseCaptionJson(text: string): ReviewCaptions {
@@ -74,7 +79,7 @@ export async function generateReviewCaptions(input: {
   brandContext?: string | null;
 }): Promise<ReviewCaptions> {
   const brandContext = input.brandContext
-    ? `\n\nBrand context (for tone and voice — do not quote verbatim):\n${input.brandContext.slice(0, 4000)}`
+    ? `\n\n${input.brandName} brand context (for tone and voice, and the only source of brand facts besides the review — do not quote verbatim):\n${input.brandContext.slice(0, 4000)}`
     : "";
 
   const userMessage =
@@ -86,7 +91,7 @@ export async function generateReviewCaptions(input: {
     `\n\nGenerate the JSON content for this review.`;
 
   const { text } = await callClaude({
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(input.brandName),
     messages: [{ role: "user", content: userMessage }],
     maxTokens: 3000,
     budgetTokens: 1200,

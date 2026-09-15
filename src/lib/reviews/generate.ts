@@ -45,18 +45,27 @@ function buildKiePrompt(opts: {
   ].join(" ");
 }
 
+export type GenerateReviewGraphicResult = {
+  graphicId: string;
+  /** Formats whose Kie job was submitted. */
+  submitted: number;
+  /** Kie submission errors, one per format that couldn't start. */
+  errors: string[];
+};
+
 /**
  * Generate a full review graphic set for one review.
  * Inserts the parent `review_graphics` row + one `review_graphic_assets` row
- * per format (each with its own Kie job), and marks the review as rendered.
- * Returns the parent graphic id. Throws if caption generation fails.
+ * per format (each with its own Kie job). The review is marked rendered only if
+ * at least one job was submitted; if none were, the set is marked `error` and
+ * the review stays available to retry. Throws if caption generation fails.
  */
 export async function generateReviewGraphicForReview(opts: {
   review: ReviewRow;
   brandName: string;
   userId: string | null;
   brandContext?: string | null;
-}): Promise<string> {
+}): Promise<GenerateReviewGraphicResult> {
   const { review, brandName, userId } = opts;
 
   // 1) Captions (Claude). If this throws, the caller records the failure.
@@ -106,6 +115,8 @@ export async function generateReviewGraphicForReview(opts: {
   const imageUrls = [...photoUrls, ...(brandLogoUrl ? [brandLogoUrl] : [])];
 
   // 4) One Kie job per format
+  let submitted = 0;
+  const errors: string[] = [];
   for (const format of REVIEW_FORMATS) {
     const prompt = buildKiePrompt({
       brandName,
@@ -137,16 +148,29 @@ export async function generateReviewGraphicForReview(opts: {
         .update(schema.reviewGraphicAssets)
         .set({ kieJobId: taskId, updatedAt: new Date() })
         .where(eq(schema.reviewGraphicAssets.id, asset.id));
+      submitted++;
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Kie submission failed";
+      errors.push(message);
       await db
         .update(schema.reviewGraphicAssets)
         .set({
           status: "error",
-          errorMessage: err instanceof Error ? err.message : "Kie submission failed",
+          errorMessage: message,
           updatedAt: new Date(),
         })
         .where(eq(schema.reviewGraphicAssets.id, asset.id));
     }
+  }
+
+  if (submitted === 0) {
+    // Nothing is rendering: fail the set now instead of leaving it "generating",
+    // and leave the review un-rendered so it can be generated again.
+    await db
+      .update(schema.reviewGraphics)
+      .set({ status: "error", errorMessage: errors[0] || "Image generation could not be started", updatedAt: new Date() })
+      .where(eq(schema.reviewGraphics.id, graphic.id));
+    return { graphicId: graphic.id, submitted, errors };
   }
 
   // 5) Mark review rendered so it isn't picked again
@@ -155,5 +179,5 @@ export async function generateReviewGraphicForReview(opts: {
     .set({ rendered: true, renderedAt: new Date() })
     .where(eq(schema.reviews.reviewId, review.reviewId));
 
-  return graphic.id;
+  return { graphicId: graphic.id, submitted, errors };
 }

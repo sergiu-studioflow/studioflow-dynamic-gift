@@ -157,6 +157,15 @@ export function ScenesLibrary() {
     }
   };
 
+  if (!clientId) {
+    return (
+      <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border py-16 text-center text-sm text-muted-foreground">
+        <ImageIcon className="h-6 w-6" />
+        <p className="max-w-sm">Select a brand from the switcher to see and upload its scenes.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {/* Header */}

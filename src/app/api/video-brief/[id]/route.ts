@@ -3,6 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { eq, asc } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { isShippable, QC_HELD } from "@/lib/qc/gate";
+import { deleteTextReviewsForRequest } from "@/lib/qc/enqueue";
 
 const isHeld = (s?: string | null) => QC_HELD.includes(s ?? "skipped");
 
@@ -74,7 +75,8 @@ export async function DELETE(
     return NextResponse.json({ error: "Request not found" }, { status: 404 });
   }
 
-  // Delete briefs first (no cascade on this FK)
+  // QC reviews, then briefs (no cascade on either), then the request.
+  await deleteTextReviewsForRequest("video_brief", id);
   await db
     .delete(schema.generatedVideoBriefs)
     .where(eq(schema.generatedVideoBriefs.requestId, id));

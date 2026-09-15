@@ -4,10 +4,12 @@ import { getAppConfig } from "@/lib/config";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
+import { INITIALIZE_ACTION, isProcessingStale, processingStartedAt } from "../processing";
 
 export const dynamic = "force-dynamic";
 
-// POST /api/organic-profiles/initialize — trigger n8n scraper
+// POST /api/organic-profiles/initialize — trigger n8n scraper.
+// Also the Retry for a profile in Error, or stuck in Processing past the stale window.
 export async function POST(request: NextRequest) {
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
@@ -36,7 +38,11 @@ export async function POST(request: NextRequest) {
   }
 
   if (profile.trackingStatus === "Processing") {
-    return NextResponse.json({ error: "Profile is already being processed" }, { status: 409 });
+    const startedAt = (await processingStartedAt([profile])).get(profile.id);
+    // Stuck past the stale window: the scraper most likely died, so allow a retry.
+    if (!isProcessingStale(startedAt)) {
+      return NextResponse.json({ error: "Profile is already being processed" }, { status: 409 });
+    }
   }
 
   const config = await getAppConfig();
@@ -57,6 +63,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const resolvedClientId = clientId || profile.clientId;
+
+  // Record when this scrape was requested (see ../processing.ts) before flipping
+  // the status, so a stuck Processing profile can later be detected and retried.
+  try {
+    await db.insert(schema.activityLog).values({
+      userId: auth.portalUser.id,
+      clientId: resolvedClientId,
+      action: INITIALIZE_ACTION,
+      resourceType: "organic_profile",
+      details: { profileId: profile.id, platform: profile.platform, postsNumber },
+    });
+  } catch (err) {
+    console.error("[organic-profiles/initialize] activity log", err);
+  }
+
   // Set status to Processing
   await db
     .update(schema.organicProfiles)
@@ -64,7 +86,6 @@ export async function POST(request: NextRequest) {
     .where(eq(schema.organicProfiles.id, profileId));
   // Resolve client_slug from storage_prefix so the n8n scraper writes media to
   // brands/<agency>/<client_slug>/scraped/... instead of agency-level scraped/.
-  const resolvedClientId = clientId || profile.clientId;
   const storagePrefix = resolvedClientId ? await getClientStoragePrefix(resolvedClientId) : null;
   const clientSlug = storagePrefix ? storagePrefix.split("/").pop() ?? null : null;
 

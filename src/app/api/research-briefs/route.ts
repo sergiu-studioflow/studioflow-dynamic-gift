@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/research-briefs
  * List research briefs, scoped by clientId.
- * Optional query params: sourceType, mediaType, status, clientId
+ * Optional query params: sourceType, sourceId, mediaType, status, clientId
  */
 export async function GET(req: NextRequest) {
   const auth = await requireAuth();
@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const sourceType = searchParams.get("sourceType");
+  const sourceIdParam = searchParams.get("sourceId");
   const mediaType = searchParams.get("mediaType");
   const status = searchParams.get("status");
   const clientId = searchParams.get("clientId");
@@ -23,6 +24,13 @@ export async function GET(req: NextRequest) {
   const conditions = [];
   if (clientId) conditions.push(eq(schema.researchBriefs.clientId, clientId));
   if (sourceType) conditions.push(eq(schema.researchBriefs.sourceType, sourceType));
+  if (sourceIdParam) {
+    const sourceId = Number(sourceIdParam);
+    if (!Number.isInteger(sourceId)) {
+      return NextResponse.json({ error: "sourceId must be an integer" }, { status: 400 });
+    }
+    conditions.push(eq(schema.researchBriefs.sourceId, sourceId));
+  }
   if (mediaType) conditions.push(eq(schema.researchBriefs.mediaType, mediaType));
   if (status) conditions.push(eq(schema.researchBriefs.status, status));
 
@@ -39,6 +47,7 @@ export async function GET(req: NextRequest) {
       primaryHook: schema.researchBriefs.primaryHook,
       targetPersona: schema.researchBriefs.targetPersona,
       status: schema.researchBriefs.status,
+      errorMessage: schema.researchBriefs.errorMessage,
       aiModel: schema.researchBriefs.aiModel,
       generationDurationMs: schema.researchBriefs.generationDurationMs,
       createdAt: schema.researchBriefs.createdAt,

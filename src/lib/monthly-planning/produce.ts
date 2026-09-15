@@ -12,7 +12,7 @@
  */
 
 import { db, schema } from "@/lib/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { analyzeReferenceAd, generateCustomPrompt } from "@/lib/static-ads/custom-pipeline";
 import { pickReferenceForClient } from "@/lib/static-ads/reference-selection";
 import { submitKieJob } from "@/lib/static-ads/kie-ai";
@@ -25,12 +25,9 @@ function ratioForFormat(format: string): string {
 }
 
 /**
- * Pick a reference image for this brand.
- *
- * Previously the fallback branch was unscoped — a random row from the whole
- * global library, so every brand without winners (8 of 9) got the same
- * cross-industry pool. Now resolves per brand: winners → the brand's own
- * references → the shared pool filtered by allowed industries → shared.
+ * Pick a reference image for this brand, resolved per brand: winners → the brand's own
+ * references → the shared pool filtered by allowed industries → shared. context.ts
+ * bases static eligibility on the same tiers.
  */
 async function pickReference(clientId: string): Promise<string | null> {
   const picked = await pickReferenceForClient(clientId);
@@ -41,11 +38,13 @@ async function pickReference(clientId: string): Promise<string | null> {
 }
 
 /**
- * Produce a static ad for one plan item. Inserts a static_ad_generations row
- * (status generating, kieJobId set), links it, flips the item to producing.
- * On failure, marks the item error.
+ * Produce a static ad for one plan item. The caller has already claimed the item
+ * (status producing, no generation) so a run killed mid-way never resubmits the paid
+ * Claude/Kie calls. Inserts a static_ad_generations row (status generating, kieJobId
+ * set) and links it; on failure marks the item error. Returns true once submitted.
+ * Both writes are guarded on the claim, so a slot skipped mid-production stays skipped.
  */
-export async function produceStaticItem(item: PlanItem, userId: string | null): Promise<void> {
+export async function produceStaticItem(item: PlanItem, userId: string | null): Promise<boolean> {
   try {
     if (!item.productId) throw new Error("No product on this static slot");
 
@@ -125,12 +124,14 @@ export async function produceStaticItem(item: PlanItem, userId: string | null): 
 
     await db
       .update(schema.planItems)
-      .set({ generationId: gen.id, status: "producing", errorMessage: null, updatedAt: new Date() })
-      .where(eq(schema.planItems.id, item.id));
+      .set({ generationId: gen.id, errorMessage: null, updatedAt: new Date() })
+      .where(and(eq(schema.planItems.id, item.id), eq(schema.planItems.status, "producing")));
+    return true;
   } catch (err) {
     await db
       .update(schema.planItems)
       .set({ status: "error", errorMessage: `Production failed: ${err instanceof Error ? err.message : "unknown"}`, updatedAt: new Date() })
-      .where(eq(schema.planItems.id, item.id));
+      .where(and(eq(schema.planItems.id, item.id), eq(schema.planItems.status, "producing")));
+    return false;
   }
 }

@@ -1,9 +1,10 @@
+import { sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { uploadToR2 } from "@/lib/r2";
 import { slugify } from "@/lib/utils";
 import { getAppConfig } from "@/lib/config";
 import { buildPlaceholderStaticAdConfig } from "@/lib/static-ads/placeholder-prompts";
-import type { Client } from "@/lib/types";
+import { toClient, type Client } from "@/lib/types";
 
 // Default brand intelligence sections seeded for every new client
 const DEFAULT_BRAND_INTEL_SECTIONS = [
@@ -57,12 +58,19 @@ export async function provisionClient(
   const clientSlug = input.clientSlug || slugify(input.clientName);
   const storagePrefix = `brands/${agencySlug}/${clientSlug}`;
 
+  // Brands list in sortOrder and the switcher defaults to the first one, so a new
+  // brand goes to the end rather than jumping ahead of the existing ones at 0.
+  const [{ nextSortOrder }] = await db
+    .select({ nextSortOrder: sql<number>`coalesce(max(${schema.clients.sortOrder}), -1) + 1` })
+    .from(schema.clients);
+
   // 1. Create client record
   const [client] = await db
     .insert(schema.clients)
     .values({
       brandName: input.clientName,
       clientSlug: clientSlug,
+      sortOrder: Number(nextSortOrder) || 0,
       website: input.website || null,
       category: input.category || null,
       primaryMarket: input.primaryMarket || null,
@@ -153,5 +161,5 @@ export async function provisionClient(
     },
   });
 
-  return client as unknown as Client;
+  return toClient(client);
 }

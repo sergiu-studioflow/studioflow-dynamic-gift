@@ -8,24 +8,23 @@ import { toAccessibleUrl } from "@/lib/r2";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/winners/random
- * Return a single random winner for shuffle mode.
- * Accepts optional ?clientId= to filter by client.
+ * GET /api/winners/random?clientId=
+ * Return a single random winner for shuffle mode. clientId is required: a winner is a
+ * brand's own creative, so an unscoped pick would hand one brand another brand's ad.
  */
 export async function GET(req: NextRequest) {
   const authResult = await requireAuth();
   if (isAuthError(authResult)) return authResult;
 
   const clientId = req.nextUrl.searchParams.get("clientId");
-  const conditions = [eq(schema.winnersLibrary.isActive, true)];
-  if (clientId) {
-    conditions.push(eq(schema.winnersLibrary.clientId, clientId));
+  if (!clientId) {
+    return NextResponse.json({ error: "clientId is required — select a client first" }, { status: 400 });
   }
 
   const [winner] = await db
     .select()
     .from(schema.winnersLibrary)
-    .where(and(...conditions))
+    .where(and(eq(schema.winnersLibrary.isActive, true), eq(schema.winnersLibrary.clientId, clientId)))
     .orderBy(sql`random()`)
     .limit(1);
 

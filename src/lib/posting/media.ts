@@ -6,9 +6,10 @@
  *     Instagram feed accepts 4:5 (0.8) … 1.91:1. Anything taller than 4:5
  *     (e.g. 9:16 story crops from the static-ad pipeline) → IG Story.
  *     Facebook feed accepts any ratio.
- * - Re-encode to JPEG when the image is too large or a marginal ratio can be
- *   safely centre-cropped to fit IG feed; upload the variant to R2 and return
- *   its public URL as a per-target media_override_url.
+ * - Re-encode every Instagram image to an sRGB JPEG ≤ 8 MB (IG content publishing
+ *   accepts JPEG only; static ads and review graphics are PNG), centre-cropping a
+ *   marginal ratio to fit IG feed; upload the variant to R2 and return its public
+ *   URL as a per-target media_override_url.
  */
 
 import sharp from "sharp";
@@ -18,6 +19,7 @@ import type { PlatformKey, Placement } from "./platforms";
 const IG_FEED_MIN_RATIO = 0.8; // 4:5 portrait
 const IG_FEED_MAX_RATIO = 1.91; // 1.91:1 landscape
 const IG_MAX_BYTES = 8_000_000;
+const IG_MAX_WIDTH = 1440; // IG scales anything wider down to this
 const CROP_TOLERANCE = 0.05; // within 5% of the 4:5 bound → crop to fit rather than route to story
 
 export type ProbedMedia = {
@@ -92,8 +94,8 @@ export function routePlacement(
 
 /**
  * Produce an IG-compliant JPEG variant of an image and upload it to R2.
- * Centre-crops to the nearest IG-feed bound when needed, always outputs JPEG
- * (sRGB, ≤ IG size cap). Returns the public (external) R2 URL for the variant.
+ * Centre-crops to the nearest IG-feed bound when asked, always outputs JPEG
+ * (sRGB, ≤ 1440px wide, ≤ IG size cap). Returns the public (external) R2 URL for the variant.
  */
 export async function makeIgVariant(opts: {
   sourceUrl: string;
@@ -102,29 +104,46 @@ export async function makeIgVariant(opts: {
   crop: boolean;
 }): Promise<string> {
   const { buffer } = await fetchMedia(opts.sourceUrl);
-  let img = sharp(buffer).rotate(); // honour EXIF orientation
-  const meta = await img.metadata();
+  const meta = await sharp(buffer).metadata();
+  // metadata() reports stored dimensions; EXIF orientations 5–8 display rotated 90°.
+  const rotated = (meta.orientation ?? 1) >= 5;
+  const width = rotated ? meta.height : meta.width;
+  const height = rotated ? meta.width : meta.height;
 
-  if (opts.crop && meta.width && meta.height) {
-    const r = meta.width / meta.height;
-    let targetW = meta.width;
-    let targetH = meta.height;
+  let targetW = width;
+  let targetH = height;
+  if (opts.crop && width && height) {
+    const r = width / height;
     if (r < IG_FEED_MIN_RATIO) {
       // too tall → crop height to 4:5
-      targetH = Math.round(meta.width / IG_FEED_MIN_RATIO);
+      targetH = Math.round(width / IG_FEED_MIN_RATIO);
     } else if (r > IG_FEED_MAX_RATIO) {
       // too wide → crop width to 1.91:1
-      targetW = Math.round(meta.height * IG_FEED_MAX_RATIO);
+      targetW = Math.round(height * IG_FEED_MAX_RATIO);
     }
-    img = img.resize(targetW, targetH, { fit: "cover", position: "attention" });
   }
 
-  let quality = 88;
-  let out = await img.jpeg({ quality, mozjpeg: true }).toBuffer();
-  while (out.length > IG_MAX_BYTES && quality > 50) {
-    quality -= 12;
-    out = await sharp(buffer).rotate().jpeg({ quality, mozjpeg: true }).toBuffer();
+  // sharp keeps only the last resize() of a pipeline, so the crop and the width cap are one resize.
+  const encode = (quality: number, maxWidth: number) => {
+    let img = sharp(buffer).rotate(); // honour EXIF orientation
+    if (targetW && targetH) {
+      const scale = Math.min(1, maxWidth / targetW);
+      img = img.resize(Math.round(targetW * scale), Math.round(targetH * scale), { fit: "cover", position: "attention" });
+    }
+    return img
+      .flatten({ background: "#ffffff" }) // PNG transparency would otherwise turn black
+      .toColourspace("srgb")
+      .jpeg({ quality, mozjpeg: true })
+      .toBuffer();
+  };
+
+  let out = await encode(88, IG_MAX_WIDTH);
+  for (const quality of [76, 64, 52]) {
+    if (out.length <= IG_MAX_BYTES) break;
+    out = await encode(quality, IG_MAX_WIDTH);
   }
+  if (out.length > IG_MAX_BYTES) out = await encode(70, 1080);
+  if (out.length > IG_MAX_BYTES) throw new Error("Could not re-encode the image under Instagram's 8 MB limit");
 
   const key = `${opts.storageBase}/posting/${opts.postId}-instagram.jpg`;
   const url = await uploadToR2(key, out, "image/jpeg");

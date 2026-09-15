@@ -3,7 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { getApiKey } from "@/lib/api-keys";
-import { getPageInfo, getIgUserInfo, MetaGraphError } from "@/lib/posting/meta";
+import { getPageInfo, getIgUserInfo, getPageAccessToken, MetaGraphError } from "@/lib/posting/meta";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -11,7 +11,8 @@ export const maxDuration = 30;
 /**
  * POST /api/posting/accounts/test  { id }
  * Hits the Graph API with the vault System User token to verify the page_id /
- * ig_user_id resolves. Persists the resolved name + health on the account row.
+ * ig_user_id resolves — and, for a Page, that a Page access token (what publishing
+ * needs) can be obtained. Persists the resolved name + health on the account row.
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -44,6 +45,8 @@ export async function POST(req: NextRequest) {
         ? await getIgUserInfo(account.externalId, token)
         : await getPageInfo(account.externalId, token);
     const name = "username" in info ? info.username : info.name;
+    // Reading the Page is not enough to post to it.
+    if (account.platform === "facebook") await getPageAccessToken(account.externalId, token);
 
     const [updated] = await db
       .update(schema.socialAccounts)

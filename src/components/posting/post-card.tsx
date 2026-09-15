@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { Instagram, Facebook, AlertTriangle, CheckCircle2, Clock, RefreshCw, ExternalLink } from "lucide-react";
+import { Instagram, Facebook, AlertTriangle, CheckCircle2, Clock, RefreshCw, ExternalLink, Undo2, Ban, Trash2, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -24,8 +24,16 @@ const STATUS_STYLE: Record<string, { label: string; variant: "default" | "second
   cancelled: { label: "Cancelled", variant: "outline" },
 };
 
+/** Matches the API: a queue entry still 'generating' after this long can be deleted. */
+const STALE_GENERATING_MS = 5 * 60_000;
+
 function PlatformIcon({ platform }: { platform: string }) {
   return platform === "instagram" ? <Instagram className="h-4 w-4" /> : <Facebook className="h-4 w-4" />;
+}
+
+async function errorFrom(res: Response, fallback: string): Promise<string> {
+  const data = await res.json().catch(() => ({}));
+  return (data as { error?: string }).error || fallback;
 }
 
 export function PostCard({
@@ -34,16 +42,65 @@ export function PostCard({
   onToggleSelect,
   onChanged,
   fmtSchedule,
+  now,
+  overdueMinutes,
 }: {
   post: ScheduledPost;
   selected: boolean;
   onToggleSelect: (id: string) => void;
   onChanged: () => void;
   fmtSchedule: (iso: string, tz: string) => string;
+  /** When the list was loaded (ms) — keeps render pure. */
+  now: number;
+  overdueMinutes: number;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
   const editable = post.status === "draft";
   const s = STATUS_STYLE[post.status] || STATUS_STYLE.draft;
   const name = String(post.sourceSnapshot?.name || post.sourceType);
+
+  // Nothing has gone out and nothing is in flight or unresolved.
+  const untouched = post.targets.every((t) => ["pending", "failed", "skipped"].includes(t.status) && t.errorCode !== "ambiguous_stuck");
+  const staleGenerating = post.status === "generating" && now - new Date(post.createdAt).getTime() > STALE_GENERATING_MS;
+  const canUnschedule = post.status === "scheduled" && untouched;
+  const canCancel = (post.status === "scheduled" || post.status === "publishing") && untouched;
+  const canDelete = (["draft", "cancelled", "failed"].includes(post.status) || staleGenerating) && untouched;
+  const overdue =
+    ["scheduled", "publishing"].includes(post.status) &&
+    !!post.scheduledAt &&
+    now - new Date(post.scheduledAt).getTime() > overdueMinutes * 60_000 &&
+    post.targets.some((t) => t.enabled && t.status === "pending");
+
+  async function run(kind: "unschedule" | "cancel" | "delete") {
+    const prompts = {
+      unschedule: "Unschedule this post? It goes back to Drafts and will not publish until it is scheduled again.",
+      cancel: "Cancel this post? It will not publish, and moves to History.",
+      delete: "Delete this post permanently? This cannot be undone.",
+    };
+    if (!confirm(prompts[kind])) return;
+    setBusy(true);
+    setActionError("");
+    try {
+      const res =
+        kind === "delete"
+          ? await fetch(`/api/posting/posts/${post.id}`, { method: "DELETE" })
+          : await fetch(`/api/posting/posts/${post.id}`, {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ action: kind }),
+            });
+      if (!res.ok) {
+        setActionError(await errorFrom(res, `Could not ${kind} the post`));
+        return;
+      }
+      onChanged();
+    } catch {
+      setActionError("Network error — try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className={cn("rounded-xl border bg-card p-4 transition-all", selected ? "border-primary ring-1 ring-primary/30" : "border-border")}>
@@ -68,9 +125,12 @@ export function PostCard({
 
         {/* body */}
         <div className="min-w-0 flex-1">
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-semibold">{name}</span>
-            <Badge variant={s.variant} className="text-[10px]">{s.label}</Badge>
+            <Badge variant={staleGenerating ? "destructive" : s.variant} className="text-[10px]">
+              {staleGenerating ? "Stuck generating" : s.label}
+            </Badge>
+            {overdue && <Badge variant="warning" className="text-[10px]">Overdue</Badge>}
             {post.angleTag && <Badge variant="outline" className="text-[10px]">{post.angleTag}</Badge>}
             {post.scheduledAt && (
               <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
@@ -78,6 +138,28 @@ export function PostCard({
               </span>
             )}
           </div>
+
+          {(canUnschedule || canCancel || canDelete) && (
+            <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              {canUnschedule && (
+                <Button size="sm" variant="outline" className="h-6 text-[11px]" onClick={() => run("unschedule")} disabled={busy}>
+                  <Undo2 className="mr-1 h-3 w-3" /> Unschedule
+                </Button>
+              )}
+              {canCancel && (
+                <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => run("cancel")} disabled={busy}>
+                  <Ban className="mr-1 h-3 w-3" /> Cancel post
+                </Button>
+              )}
+              {canDelete && (
+                <Button size="sm" variant="ghost" className="h-6 text-[11px] text-destructive hover:text-destructive" onClick={() => run("delete")} disabled={busy}>
+                  <Trash2 className="mr-1 h-3 w-3" /> Delete
+                </Button>
+              )}
+              {busy && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+            </div>
+          )}
+          {actionError && <p className="mb-2 text-[11px] text-destructive">{actionError}</p>}
 
           {post.errorMessage && (
             <div className="mb-2 flex items-start gap-1.5 rounded-md bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
@@ -101,13 +183,15 @@ function TargetEditor({ post, target, editable, onChanged }: { post: ScheduledPo
   const [tags, setTags] = useState((target.hashtags || []).join(" "));
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const caps = PLATFORM_CAPS[target.platform] || { ideal: 400, hard: 2200 };
   const over = caption.length > caps.ideal;
 
   async function save() {
     setSaving(true);
+    setError("");
     try {
-      await fetch(`/api/posting/posts/${post.id}`, {
+      const res = await fetch(`/api/posting/posts/${post.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -117,7 +201,13 @@ function TargetEditor({ post, target, editable, onChanged }: { post: ScheduledPo
           hashtags: tags.split(/[\s,]+/).map((h) => h.replace(/^#+/, "")).filter(Boolean),
         }),
       });
+      if (!res.ok) {
+        setError(await errorFrom(res, "Caption not saved"));
+        return;
+      }
       onChanged();
+    } catch {
+      setError("Caption not saved — check your connection.");
     } finally {
       setSaving(false);
     }
@@ -125,13 +215,20 @@ function TargetEditor({ post, target, editable, onChanged }: { post: ScheduledPo
 
   async function patch(action: string, extra: Record<string, unknown> = {}) {
     setBusy(true);
+    setError("");
     try {
-      await fetch(`/api/posting/posts/${post.id}`, {
+      const res = await fetch(`/api/posting/posts/${post.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action, targetId: target.id, ...extra }),
       });
+      if (!res.ok) {
+        setError(await errorFrom(res, "That didn't work — try again."));
+        return;
+      }
       onChanged();
+    } catch {
+      setError("Network error — try again.");
     } finally {
       setBusy(false);
     }
@@ -192,6 +289,9 @@ function TargetEditor({ post, target, editable, onChanged }: { post: ScheduledPo
           {!!target.hashtags?.length && (
             <p className="mt-1 text-[11px] text-primary/80">{target.hashtags.map((h) => `#${h}`).join(" ")}</p>
           )}
+          {target.status === "pending" && target.errorMessage && (
+            <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">{target.errorMessage}</p>
+          )}
           {target.status === "failed" && (
             <div className="mt-2 flex items-center gap-2">
               {target.errorMessage && <span className="text-[11px] text-destructive">{target.errorMessage}</span>}
@@ -207,6 +307,7 @@ function TargetEditor({ post, target, editable, onChanged }: { post: ScheduledPo
           )}
         </>
       )}
+      {error && <p className="mt-1 text-[11px] text-destructive">{error}</p>}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useClient } from "@/lib/client-context";
+import { fitImageForUpload, readUploadResponse } from "@/lib/static-ads/upload-client";
 
 type ReferenceAd = {
   id: string;
@@ -30,6 +31,7 @@ export function ReferenceLibraryManager() {
   const [refs, setRefs] = useState<ReferenceAd[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [filterIndustry, setFilterIndustry] = useState<string>("");
   const [scope, setScope] = useState<Scope>("brand");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -51,10 +53,13 @@ export function ReferenceLibraryManager() {
 
   const handleUpload = useCallback(
     async (file: File) => {
+      setUploadError(null);
       setUploading(true);
       try {
+        // Compress large images first — the upload goes through a function capped at 4.5 MB.
+        const fileToSend = await fitImageForUpload(file);
         const formData = new FormData();
-        formData.append("file", file);
+        formData.append("file", fileToSend);
         formData.append("name", file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "));
         formData.append("industry", filterIndustry || "Other");
         // Uploading from the brand tab makes this reference that brand's own.
@@ -64,16 +69,11 @@ export function ReferenceLibraryManager() {
           method: "POST",
           body: formData,
         });
-
-        if (!res.ok) {
-          const data = await res.json();
-          alert(data.error || "Upload failed");
-          return;
-        }
+        await readUploadResponse(res);
 
         await fetchRefs();
       } catch (err) {
-        alert(err instanceof Error ? err.message : "Upload failed");
+        setUploadError(err instanceof Error ? err.message : "Upload failed");
       } finally {
         setUploading(false);
       }
@@ -182,6 +182,9 @@ export function ReferenceLibraryManager() {
           className="hidden"
         />
       </div>
+      {uploadError && (
+        <p className="-mt-2 mb-3 text-[11px] text-red-500">{uploadError}</p>
+      )}
 
       {/* Grid */}
       {loading ? (

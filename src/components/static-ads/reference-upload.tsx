@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Upload, X, Loader2, ImageIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fitImageForUpload, readUploadResponse } from "@/lib/static-ads/upload-client";
 
 type ReferenceUploadProps = {
   onUploadComplete: (url: string) => void;
@@ -39,10 +40,6 @@ export function ReferenceUpload({
         setError("Only PNG, JPEG, and WebP images are supported");
         return;
       }
-      if (file.size > 50 * 1024 * 1024) {
-        setError("File must be under 50 MB");
-        return;
-      }
 
       setError(null);
       setIsUploading(true);
@@ -52,18 +49,18 @@ export function ReferenceUpload({
       setPreviewUrl(localUrl);
 
       try {
+        // Large images are compressed first — the upload goes through a function whose
+        // request body is capped at 4.5 MB.
+        const fileToSend = await fitImageForUpload(file);
         const formData = new FormData();
-        formData.append("file", file);
+        formData.append("file", fileToSend);
         // brandSlug resolved server-side via BRAND_SLUG env var
         formData.append("assetType", "static-ad-system/reference-ads");
         if (clientSlug) formData.append("clientSlug", clientSlug);
 
         const res = await fetch("/api/upload", { method: "POST", body: formData });
-        const data = await res.json();
-
-        if (!res.ok) {
-          throw new Error(data.error || "Upload failed");
-        }
+        const data = await readUploadResponse<{ url?: string }>(res);
+        if (!data.url) throw new Error("Upload failed: no file URL returned");
 
         onUploadComplete(data.url);
       } catch (err) {
@@ -162,7 +159,7 @@ export function ReferenceUpload({
               <span className="text-primary font-medium">browse</span>
             </p>
             <p className="text-[10px] text-muted-foreground/50">
-              PNG, JPEG, WebP — max 50 MB
+              PNG, JPEG, WebP — up to 50 MB (images over 4 MB are compressed before upload)
             </p>
           </>
         )}

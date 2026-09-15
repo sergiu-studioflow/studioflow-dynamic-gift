@@ -3,7 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { generateEditCommand, buildEditPrompt } from "@/lib/static-ads/edit-pipeline";
+import { generateEditCommand, buildEditPrompt, NoApplicableEditsError } from "@/lib/static-ads/edit-pipeline";
 import { submitKieJob } from "@/lib/static-ads/kie-ai";
 
 export const dynamic = "force-dynamic";
@@ -56,7 +56,8 @@ export async function POST(req: NextRequest) {
     // Agent 3: Generate structured edit command
     const editCommandJson = await generateEditCommand(analysisJson, edits);
 
-    // Build Kie AI prompt from edit command
+    // Build Kie AI prompt from edit command. Throws NoApplicableEditsError — before any row
+    // or paid job exists — when every requested change was blocked or unmatched.
     const prompt = buildEditPrompt(editCommandJson);
 
     // Insert new generation record for the edit
@@ -85,11 +86,26 @@ export async function POST(req: NextRequest) {
     // Pass the raw public R2 URL to Kie — NOT a presigned URL. Presigned
     // URLs expire after 10 min; if Kie's queue takes longer, the input fetch
     // 403s. The public r2.dev URL doesn't expire.
-    const kieResult = await submitKieJob({
-      prompt,
-      imageUrls: [original.imageUrl],
-      aspectRatio: original.aspectRatio || "1:1",
-    });
+    let kieResult: Awaited<ReturnType<typeof submitKieJob>>;
+    try {
+      kieResult = await submitKieJob({
+        prompt,
+        imageUrls: [original.imageUrl],
+        aspectRatio: original.aspectRatio || "1:1",
+      });
+    } catch (submitErr) {
+      // Don't leave an orphan `pending` edit row behind a failed submission.
+      const message = submitErr instanceof Error ? submitErr.message : "Image engine submission failed";
+      await db
+        .update(schema.staticAdGenerations)
+        .set({ status: "error", errorMessage: message, updatedAt: new Date() })
+        .where(eq(schema.staticAdGenerations.id, editGeneration.id));
+      console.error("[static-ads/edit/apply] Kie submit failed:", submitErr);
+      return NextResponse.json(
+        { error: `Image engine submission failed: ${message}`, generationId: editGeneration.id },
+        { status: 502 }
+      );
+    }
 
     // Update with Kie job ID
     await db
@@ -106,6 +122,9 @@ export async function POST(req: NextRequest) {
       kieJobId: kieResult.taskId,
     });
   } catch (err) {
+    if (err instanceof NoApplicableEditsError) {
+      return NextResponse.json({ error: err.message }, { status: 422 });
+    }
     console.error("[static-ads/edit/apply]", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Edit failed" },

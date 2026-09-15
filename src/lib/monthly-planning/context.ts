@@ -3,12 +3,13 @@
  *
  * Gathers exactly what the planner + brief generators need for one brand:
  * products (with images → static-eligible), USPs, brand-intelligence sections,
- * whether a reference winner exists (static needs one), and the brand's posting
- * cadence (slots/month) so the plan distributes realistically.
+ * whether a reference ad is available to produce.ts (its own winners or references,
+ * else the shared pool), and the brand's posting cadence (slots/month) so the plan
+ * distributes realistically.
  */
 
 import { db, schema } from "@/lib/db";
-import { and, eq, desc, sql } from "drizzle-orm";
+import { and, eq, desc, isNull, or, sql } from "drizzle-orm";
 import { resolvePrefs, type PostingPrefs } from "@/lib/posting/slots";
 
 export type BrandProduct = {
@@ -30,7 +31,8 @@ export type BrandContext = {
   products: BrandProduct[];
   /** Products usable for brief→static generation (have an image). */
   staticEligibleProducts: BrandProduct[];
-  hasReference: boolean; // a winner exists → brief→static can run
+  /** produce.ts can pick a reference (brand winners → brand references → shared pool). */
+  hasReference: boolean;
   hasStaticConfig: boolean; // client_static_ad_config row exists
   prefs: PostingPrefs;
 };
@@ -42,7 +44,7 @@ export async function loadBrandContext(clientId: string): Promise<BrandContext> 
     .where(eq(schema.brands.id, clientId))
     .limit(1);
 
-  const [intelRows, uspRows, productRows, winnerCount, cfg] = await Promise.all([
+  const [intelRows, uspRows, productRows, winnerCount, referenceCount, cfg] = await Promise.all([
     db
       .select({ title: schema.clientBrandIntelligence.title, content: schema.clientBrandIntelligence.content })
       .from(schema.clientBrandIntelligence)
@@ -61,6 +63,16 @@ export async function loadBrandContext(clientId: string): Promise<BrandContext> 
       .select({ count: sql<number>`count(*)::int` })
       .from(schema.winnersLibrary)
       .where(and(eq(schema.winnersLibrary.clientId, clientId), eq(schema.winnersLibrary.isActive, true))),
+    // The brand's own references plus the shared pool — the same tiers pickReferenceForClient falls back to.
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.referenceAdLibrary)
+      .where(
+        and(
+          or(eq(schema.referenceAdLibrary.clientId, clientId), isNull(schema.referenceAdLibrary.clientId)),
+          eq(schema.referenceAdLibrary.isActive, true)
+        )
+      ),
     db
       .select({ id: schema.clientStaticAdConfig.id })
       .from(schema.clientStaticAdConfig)
@@ -96,13 +108,21 @@ export async function loadBrandContext(clientId: string): Promise<BrandContext> 
     usps,
     products,
     staticEligibleProducts: products.filter((p) => !!p.imageUrl),
-    hasReference: (winnerCount[0]?.count ?? 0) > 0,
+    hasReference: (winnerCount[0]?.count ?? 0) + (referenceCount[0]?.count ?? 0) > 0,
     hasStaticConfig: !!cfg[0],
     prefs: resolvePrefs((brand?.settings as Record<string, unknown>)?.posting),
   };
 }
 
+/** Why produce.ts could not make a static ad for this brand right now, or null if it can. */
+export function staticIneligibleReason(ctx: BrandContext): string | null {
+  if (!ctx.hasStaticConfig) return "no static-ad prompt config";
+  if (ctx.staticEligibleProducts.length === 0) return "no active product with an image";
+  if (!ctx.hasReference) return "no reference ads available";
+  return null;
+}
+
 /** A brand can produce static ads only if it has a config, a reference, and a product image. */
 export function canProduceStatic(ctx: BrandContext): boolean {
-  return ctx.hasStaticConfig && ctx.hasReference && ctx.staticEligibleProducts.length > 0;
+  return staticIneligibleReason(ctx) === null;
 }

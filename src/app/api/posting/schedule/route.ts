@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
-import { and, eq, gte, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, notInArray } from "drizzle-orm";
 import { computeSlots, resolvePrefs } from "@/lib/posting/slots";
+import { localWallTimeToUtc } from "@/lib/posting/tz";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
  * POST /api/posting/schedule
- * Body: { clientId, postIds: string[], mode: "auto" | "manual", scheduledAt? }
+ * Body: { clientId, postIds: string[], mode: "auto" | "manual", scheduledLocal? | scheduledAt? }
  * Bulk approve + schedule. "auto" fills the brand's next free slots; "manual"
- * puts every selected post at the same given time.
+ * puts every selected post at the same given time — `scheduledLocal` ("YYYY-MM-DDTHH:MM")
+ * is a wall-clock time in the brand's posting timezone; `scheduledAt` is an absolute ISO instant.
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -42,16 +44,32 @@ export async function POST(req: NextRequest) {
   // Compute the target time(s).
   let times: Date[];
   if (mode === "manual") {
-    const at = body.scheduledAt ? new Date(body.scheduledAt) : null;
-    if (!at || isNaN(at.getTime()) || at.getTime() < Date.now() - 60_000) {
-      return NextResponse.json({ error: "manual mode needs a valid future scheduledAt" }, { status: 400 });
+    let at: Date | null = null;
+    const local = typeof body.scheduledLocal === "string" ? body.scheduledLocal.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/) : null;
+    if (local) {
+      const [y, mo, d, h, mi] = local.slice(1).map((x: string) => parseInt(x, 10));
+      at = localWallTimeToUtc(y, mo, d, h, mi, prefs.timezone);
+    } else if (body.scheduledAt) {
+      at = new Date(body.scheduledAt);
     }
-    times = schedulable.map(() => at);
+    if (!at || isNaN(at.getTime()) || at.getTime() < Date.now() - 60_000) {
+      return NextResponse.json({ error: "Pick a valid time in the future (brand-local time)." }, { status: 400 });
+    }
+    const when = at;
+    times = schedulable.map(() => when);
   } else {
+    // Posts being (re)scheduled here give up their current slot.
     const occupied = await db
       .select({ scheduledAt: schema.scheduledPosts.scheduledAt })
       .from(schema.scheduledPosts)
-      .where(and(eq(schema.scheduledPosts.clientId, clientId), eq(schema.scheduledPosts.status, "scheduled"), gte(schema.scheduledPosts.scheduledAt, new Date())));
+      .where(
+        and(
+          eq(schema.scheduledPosts.clientId, clientId),
+          inArray(schema.scheduledPosts.status, ["scheduled", "publishing"]),
+          gte(schema.scheduledPosts.scheduledAt, new Date()),
+          notInArray(schema.scheduledPosts.id, schedulable.map((p) => p.id))
+        )
+      );
     const occupiedTimes = occupied.map((o) => o.scheduledAt).filter((d): d is Date => !!d);
     times = computeSlots(schedulable.length, prefs, occupiedTimes, new Date());
     if (times.length < schedulable.length) {

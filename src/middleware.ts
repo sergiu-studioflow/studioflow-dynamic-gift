@@ -23,12 +23,10 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (hasSession && request.nextUrl.pathname.startsWith("/login")) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
-    return NextResponse.redirect(url);
-  }
-
+  // No "/login → /dashboard when a cookie exists" redirect here. A cookie can outlive its
+  // session (password changed on another device, sessions revoked, user re-created); the
+  // portal layout sends such a request to /login, and this redirect sent it straight back —
+  // ERR_TOO_MANY_REDIRECTS. The login page checks the session itself.
   return NextResponse.next();
 }
 

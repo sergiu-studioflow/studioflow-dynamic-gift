@@ -4,13 +4,27 @@ import { getAppConfig } from "@/lib/config";
 import { eq, desc, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
+import { DEFAULT_META_AD_COUNTRY, isMetaAdCountry } from "@/components/competitor-ads/countries";
 
 export const dynamic = "force-dynamic";
 
+/** n8n error bodies look like {"code":404,"message":"The requested webhook ... is not registered."}. */
+async function webhookFailureDetail(res: Response): Promise<string> {
+  const text = (await res.text().catch(() => "")).trim();
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed.message === "string") return parsed.message;
+  } catch {
+    // not JSON
+  }
+  return text.slice(0, 200);
+}
+
 /**
  * POST /api/competitor-ads/refresh — trigger n8n Meta scrape (fire-and-forget)
- * Body: { competitorId, clientId }
+ * Body: { competitorId, clientId, country? }
  * Uses clientCompetitors table (not competitorSources) for multi-client.
+ * `country` defaults to AU: client_competitors has no country column.
  */
 export async function POST(request: NextRequest) {
   const auth = await requireAuth();
@@ -20,22 +34,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Viewers cannot trigger scrapes" }, { status: 403 });
   }
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
   const competitorId = body.competitorId || body.sourceId;
   const clientId = body.clientId;
-  const country = (body.country || "ALL").trim().toUpperCase();
+  const country = String(body.country || DEFAULT_META_AD_COUNTRY).trim().toUpperCase();
   if (!competitorId) {
     return NextResponse.json({ error: "Missing competitorId" }, { status: 400 });
   }
   if (!clientId) {
     return NextResponse.json({ error: "Missing clientId" }, { status: 400 });
   }
+  if (!isMetaAdCountry(country)) {
+    return NextResponse.json({ error: `Unsupported Meta Ad Library country "${country}"` }, { status: 400 });
+  }
 
-  // Fetch competitor from clientCompetitors table
+  // Fetch competitor from clientCompetitors table (must belong to this brand)
   const [competitor] = await db
     .select()
     .from(schema.clientCompetitors)
-    .where(eq(schema.clientCompetitors.id, competitorId))
+    .where(and(eq(schema.clientCompetitors.id, competitorId), eq(schema.clientCompetitors.clientId, clientId)))
     .limit(1);
 
   if (!competitor) {
@@ -58,7 +78,10 @@ export async function POST(request: NextRequest) {
       : null;
 
   if (!webhookUrl) {
-    return NextResponse.json({ error: "Scraper webhook not configured" }, { status: 500 });
+    return NextResponse.json(
+      { error: 'The Meta ads scraper webhook isn\'t configured (app_config workflows "competitor_ads_scraper").' },
+      { status: 500 }
+    );
   }
 
   // Get latest snapshot before triggering
@@ -94,15 +117,23 @@ export async function POST(request: NextRequest) {
     });
 
     if (!res.ok) {
-      return NextResponse.json({ error: "Failed to trigger scrape" }, { status: 502 });
+      const detail = await webhookFailureDetail(res);
+      return NextResponse.json(
+        { error: `The Meta ads scraper didn't accept the request (HTTP ${res.status})${detail ? `: ${detail}` : ""}` },
+        { status: 502 }
+      );
     }
 
     return NextResponse.json({
       triggered: true,
+      country,
       competitorPageId: competitor.metaPageId,
       previousSnapshotId: latestSnapshot?.snapshotId || null,
     });
-  } catch {
-    return NextResponse.json({ error: "Failed to reach n8n webhook" }, { status: 502 });
+  } catch (err) {
+    return NextResponse.json(
+      { error: `Couldn't reach the Meta ads scraper: ${err instanceof Error ? err.message : "network error"}` },
+      { status: 502 }
+    );
   }
 }

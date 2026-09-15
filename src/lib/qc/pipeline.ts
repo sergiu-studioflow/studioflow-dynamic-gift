@@ -12,7 +12,16 @@
 
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { CLAIM_LIMITS, MAX_ATTEMPTS, TEXT_CONCURRENCY, TEXT_SYSTEMS, VISUAL_SYSTEMS, type SourceSystem } from "./constants";
+import {
+  CLAIM_LIMITS,
+  MAX_ATTEMPTS,
+  MAX_TRANSIENT_REQUEUES,
+  RETRY_BACKOFF_SECONDS,
+  TEXT_CONCURRENCY,
+  TEXT_SYSTEMS,
+  VISUAL_SYSTEMS,
+  type SourceSystem,
+} from "./constants";
 import { isTransient } from "./claude";
 import { runGateReview } from "./grade";
 import { sourceTableFor } from "./enqueue";
@@ -22,6 +31,17 @@ type ReviewRow = typeof schema.gateReviews.$inferSelect;
 
 const setReview = (id: string, patch: Partial<ReviewRow>) =>
   db.update(schema.gateReviews).set({ ...patch, updatedAt: new Date() }).where(eq(schema.gateReviews.id, id));
+
+/** Record a grading error on a review this worker still owns. A human decision made while
+ *  the grade was in flight (overridden, or moved off 'running') is never overwritten. */
+const setClaimedReview = async (id: string, patch: Partial<ReviewRow>): Promise<boolean> => {
+  const rows = await db
+    .update(schema.gateReviews)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(and(eq(schema.gateReviews.id, id), eq(schema.gateReviews.status, "running"), eq(schema.gateReviews.overridden, false)))
+    .returning({ id: schema.gateReviews.id });
+  return rows.length > 0;
+};
 
 /** Apply the AI verdict to the source row (exception-based auto-approve/flag). Only writes
  *  if the row still points at THIS review — a human override detaches or repoints it. */
@@ -36,15 +56,19 @@ async function applyVerdict(review: ReviewRow, overallPass: boolean): Promise<vo
 }
 
 /** Claim up to `limit` pending reviews in the given lane. SKIP LOCKED keeps concurrent
- *  ticks (UI pump + cron) from grabbing the same rows. */
+ *  ticks (UI pump + cron) from grabbing the same rows. The attempt ceiling is the row's own
+ *  max_attempts (MAX_ATTEMPTS, raised by transient requeues); a row that just errored waits
+ *  out RETRY_BACKOFF_SECONDS first. */
 async function claim(systems: readonly SourceSystem[], limit: number): Promise<ReviewRow[]> {
   if (limit <= 0) return [];
+  const backoff = sql.raw(`interval '${Number(RETRY_BACKOFF_SECONDS)} seconds'`);
   const claimed = await db.execute(sql`
     UPDATE gate_reviews SET status = 'running', attempts = attempts + 1, updated_at = now()
     WHERE id IN (
       SELECT id FROM gate_reviews
       WHERE status = 'pending'
-        AND attempts < ${MAX_ATTEMPTS}
+        AND attempts < max_attempts
+        AND (error_message IS NULL OR updated_at < now() - ${backoff})
         AND source_system IN ${sql`(${sql.join(systems.map((s) => sql`${s}`), sql`, `)})`}
       ORDER BY created_at ASC LIMIT ${limit} FOR UPDATE SKIP LOCKED
     ) RETURNING id`);
@@ -85,15 +109,18 @@ async function runOne(review: ReviewRow, groundingCache: Map<string | null, Bran
     await applyVerdict(review, r.overallPass);
   } catch (e) {
     const msg = String((e as Error)?.message ?? e).slice(0, 300);
-    if (isTransient(e)) {
-      // Give the attempt back — a provider hiccup shouldn't burn a retry.
-      await setReview(review.id, { status: "pending", attempts: Math.max(0, review.attempts - 1), errorMessage: msg });
+    const transient = isTransient(e);
+    if (transient && review.maxAttempts < MAX_ATTEMPTS + MAX_TRANSIENT_REQUEUES) {
+      // Give the attempt back — a provider hiccup shouldn't burn a retry. Bounded: once the
+      // transient budget is spent, the error counts like any other failed attempt below.
+      await setClaimedReview(review.id, { status: "pending", maxAttempts: review.maxAttempts + 1, errorMessage: msg });
     } else {
-      const exhausted = review.attempts >= MAX_ATTEMPTS;
-      await setReview(review.id, { status: exhausted ? "failed" : "pending", errorMessage: msg });
+      const exhausted = review.attempts >= review.maxAttempts;
+      const errorMessage = exhausted && transient ? `Gave up after repeated provider errors: ${msg}`.slice(0, 300) : msg;
+      const owned = await setClaimedReview(review.id, { status: exhausted ? "failed" : "pending", errorMessage });
       // Permanent failure: flag the source for a human (fail-safe — never leave it
       // stranded 'pending'; flagged also stops the UI tick pump).
-      if (exhausted) await applyVerdict(review, false);
+      if (owned && exhausted) await applyVerdict(review, false);
     }
   }
 }
@@ -152,7 +179,7 @@ export async function sweepStuck(): Promise<void> {
     .where(and(inArray(schema.gateReviews.status, ["pending", "running"]), lt(schema.gateReviews.updatedAt, cutoff)));
 
   for (const review of stuck) {
-    if (review.attempts < MAX_ATTEMPTS) {
+    if (review.attempts < review.maxAttempts) {
       await setReview(review.id, { status: "pending", errorMessage: "Requeued (sweep: stuck run)" });
     } else {
       await setReview(review.id, { status: "failed", errorMessage: "Timed out (sweep)" });

@@ -42,21 +42,28 @@ const funnelColors: Record<string, string> = {
 };
 
 export default function ResearchBriefsPage() {
-  const { clientId } = useClient();
+  const { clientId, isReady } = useClient();
   const [briefs, setBriefs] = useState<ResearchBriefSummary[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
+  // Which brand+filter the current list belongs to; loading until it matches.
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const queryKey = clientId ? `${clientId}|${filter}` : null;
+  const loading = !isReady || (queryKey !== null && loadedKey !== queryKey);
 
   useEffect(() => {
     if (!clientId) return;
-    setLoading(true);
+    const key = `${clientId}|${filter}`;
+    let cancelled = false;
     const params = new URLSearchParams({ clientId });
     if (filter !== "all") params.set("mediaType", filter);
     fetch(`/api/research-briefs?${params}`)
       .then((r) => r.json())
-      .then((data) => { if (Array.isArray(data)) setBriefs(data); })
+      .then((data) => { if (!cancelled && Array.isArray(data)) setBriefs(data); })
       .catch(console.error)
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoadedKey(key); });
+    return () => {
+      cancelled = true;
+    };
   }, [clientId, filter]);
 
   // Auto-refresh generating briefs
@@ -83,7 +90,15 @@ export default function ResearchBriefsPage() {
         </p>
       </div>
 
-      {loading ? (
+      {isReady && !clientId ? (
+        <div className="flex flex-col items-center justify-center py-20 text-center">
+          <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
+          <h3 className="text-lg font-medium text-foreground mb-1">Select a brand</h3>
+          <p className="text-sm text-muted-foreground max-w-md">
+            Creative briefs are kept per brand — use the client switcher in the sidebar to pick one.
+          </p>
+        </div>
+      ) : loading ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>

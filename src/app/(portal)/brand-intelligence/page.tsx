@@ -8,7 +8,7 @@ import { ClientProductsTable } from "@/components/clients/client-products-table"
 import { useClient } from "@/lib/client-context";
 
 export default function BrandIntelligencePage() {
-  const { isMultiClient, isAllClients, clientName, clientSlug } = useClient();
+  const { isMultiClient, isAllClients, clientId, clientName, clientSlug } = useClient();
 
   // Multi-client mode with a client selected: show that client's brand intel + products
   if (isMultiClient && !isAllClients) {
@@ -42,9 +42,11 @@ export default function BrandIntelligencePage() {
           </div>
         </section>
 
-        <ClientBrandIntelEditor clientSlug={clientSlug} />
+        {/* Keyed by brand: switching brands in the sidebar must drop the previous brand's
+            draft, selections and open edits, not apply them to the new one. */}
+        <ClientBrandIntelEditor key={clientSlug} clientSlug={clientSlug} />
 
-        <ClientProductsTable clientSlug={clientSlug} />
+        <ClientProductsTable key={clientSlug} clientSlug={clientSlug} clientId={clientId} />
       </div>
     );
   }

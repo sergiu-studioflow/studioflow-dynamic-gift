@@ -18,6 +18,8 @@ export type OrganicProfile = {
   newestPostDate: string | null;
   createdAt: string;
   postCount?: number;
+  /** Processing for longer than the scraper could still be running — offered as a retry. */
+  processingStale?: boolean;
 };
 
 export type OrganicPost = {

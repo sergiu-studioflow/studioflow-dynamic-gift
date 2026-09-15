@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +15,10 @@ import {
   FileText,
   Eye,
   Code2,
+  Plus,
+  Trash2,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -27,6 +31,39 @@ type Section = {
   sectionType: string | null;
   sortOrder: number;
 };
+
+/**
+ * A section being edited. Sections are edited one by one, never re-parsed out of one
+ * big Markdown document: that lost `sectionType` (which the Static-Ad Prompt Builder
+ * and QC use to find the voice, audience, USP… sections) and turned any `## ` line
+ * inside a section into a new section. `id` and `sectionType` ride along untouched.
+ */
+type DraftSection = {
+  key: string;
+  id: string | null;
+  title: string;
+  content: string;
+  sectionType: string | null;
+};
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+let draftKeySeq = 0;
+const blankDraft = (): DraftSection => ({ key: `new-${++draftKeySeq}`, id: null, title: "", content: "", sectionType: null });
+
+function sortSections(list: Section[]): Section[] {
+  return [...list].sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+/** The read/preview document: every section as a `## Title` block. Display only — never parsed back. */
+function toDocument(list: Array<{ title: string; content: string | null }>): string {
+  return list.map((s) => `## ${s.title}\n\n${s.content || ""}`).join("\n\n---\n\n");
+}
+
+async function responseError(res: Response): Promise<string> {
+  const data = await res.json().catch(() => null);
+  return (data && typeof data.error === "string" && data.error) || `HTTP ${res.status}`;
+}
 
 function preprocessBrandIntel(text: string): string {
   if (!text) return "";
@@ -94,97 +131,174 @@ function readingStats(text: string): { words: number; minutes: number } {
 
 export function ClientBrandIntelEditor({ clientSlug }: { clientSlug: string }) {
   const [sections, setSections] = useState<Section[]>([]);
-  const [loading, setLoading] = useState(true);
+  // The slug whose sections are loaded; anything else means still loading.
+  const [loadedSlug, setLoadedSlug] = useState<string | null>(null);
+  const loading = loadedSlug !== clientSlug;
+  const [loadError, setLoadError] = useState("");
   const [collapsed, setCollapsed] = useState(true);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [drafts, setDrafts] = useState<DraftSection[]>([]);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [editPreview, setEditPreview] = useState<"split" | "edit" | "preview">("split");
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const proseRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setLoading(true);
+    let cancelled = false;
     fetch(`/api/clients/${clientSlug}/brand-intel`)
-      .then((r) => r.json())
-      .then((data) => {
-        const list: Section[] = Array.isArray(data) ? data : [];
-        setSections(list);
-        const doc = list
-          .sort((a, b) => a.sortOrder - b.sortOrder)
-          .map((s) => `## ${s.title}\n\n${s.content || ""}`)
-          .join("\n\n---\n\n");
-        setDraft(doc);
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`Couldn't load brand intel (${await responseError(r)}). Refresh to try again.`);
+        const data = await r.json();
+        if (cancelled) return;
+        setSections(Array.isArray(data) ? data : []);
+        setLoadError("");
       })
-      .finally(() => setLoading(false));
+      // Editing is disabled until a load succeeds: saving over a list that never
+      // loaded would duplicate every section the brand already has.
+      .catch((err) => {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : "Couldn't load brand intel.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadedSlug(clientSlug);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [clientSlug]);
 
-  useEffect(() => {
-    if (editing && textareaRef.current) {
-      textareaRef.current.focus();
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = Math.max(400, textareaRef.current.scrollHeight) + "px";
-    }
-  }, [editing]);
-
   const handleEdit = () => {
+    const existing = sortSections(sections).map((s) => ({
+      key: s.id,
+      id: s.id,
+      title: s.title,
+      content: s.content ?? "",
+      sectionType: s.sectionType,
+    }));
+    setDrafts(existing.length ? existing : [blankDraft()]);
+    setSaveError("");
     setEditing(true);
     setCollapsed(false);
   };
 
   const handleCancel = () => {
-    const doc = sections
-      .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((s) => `## ${s.title}\n\n${s.content || ""}`)
-      .join("\n\n---\n\n");
-    setDraft(doc);
+    setDrafts([]);
+    setSaveError("");
     setEditing(false);
   };
 
+  const updateDraft = (key: string, patch: Partial<Pick<DraftSection, "title" | "content">>) =>
+    setDrafts((prev) => prev.map((d) => (d.key === key ? { ...d, ...patch } : d)));
+
+  const moveDraft = (key: string, delta: -1 | 1) =>
+    setDrafts((prev) => {
+      const from = prev.findIndex((d) => d.key === key);
+      const to = from + delta;
+      if (from < 0 || to < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      [next[from], next[to]] = [next[to], next[from]];
+      return next;
+    });
+
+  const removeDraft = (draft: DraftSection) => {
+    if (
+      draft.id &&
+      draft.sectionType &&
+      !confirm(`Remove “${draft.title || "this section"}”? Other systems (the Ad Prompt builder, Quality Control) read it.`)
+    ) {
+      return;
+    }
+    setDrafts((prev) => prev.filter((d) => d.key !== draft.key));
+  };
+
+  /**
+   * Save section by section: kept sections are updated in place (id and sectionType
+   * unchanged), new ones created, removed ones deleted — deletes last, so a failure
+   * part-way never costs content. Every response is checked; if anything fails the
+   * editor stays open, showing what didn't save, and saving again retries only that.
+   */
   const handleSave = async () => {
+    // A new section left completely blank is ignored rather than blocking the save.
+    const next = drafts.filter((d) => d.id || d.title.trim() || d.content.trim()).map((d) => ({ ...d }));
+    if (next.some((d) => !d.title.trim())) {
+      setSaveError("Every section needs a title.");
+      return;
+    }
     setSaving(true);
+    setSaveError("");
+    const base = `/api/clients/${clientSlug}/brand-intel`;
+    // What the server holds, as confirmed by each response.
+    let saved = [...sections];
+    const failures: string[] = [];
+
     try {
-      const rawSections = draft.split(/(?=^## )/m).filter((s) => s.trim());
-      const parsed = rawSections.map((raw, i) => {
-        const lines = raw.trim().split("\n");
-        const title = lines[0].replace(/^##\s*/, "").trim();
-        const content = lines.slice(1).join("\n").replace(/^---\s*$/m, "").trim();
-        return { title, content, sortOrder: i };
-      });
-
-      for (const existing of sections) {
-        await fetch(`/api/clients/${clientSlug}/brand-intel/${existing.id}`, { method: "DELETE" });
+      for (const [sortOrder, draft] of next.entries()) {
+        const title = draft.title.trim();
+        const content = draft.content.trim();
+        if (draft.id) {
+          const current = saved.find((s) => s.id === draft.id);
+          const unchanged =
+            current &&
+            current.title.trim() === title &&
+            (current.content ?? "").trim() === content &&
+            current.sortOrder === sortOrder;
+          if (unchanged) continue;
+          const res = await fetch(`${base}/${draft.id}`, {
+            method: "PUT",
+            headers: JSON_HEADERS,
+            body: JSON.stringify({ title, content, sortOrder }),
+          });
+          if (!res.ok) {
+            failures.push(`“${title}” wasn't saved (${await responseError(res)})`);
+            continue;
+          }
+          const row: Section = await res.json();
+          saved = saved.map((s) => (s.id === row.id ? row : s));
+        } else {
+          const res = await fetch(base, {
+            method: "POST",
+            headers: JSON_HEADERS,
+            body: JSON.stringify({ title, content, sortOrder }),
+          });
+          if (!res.ok) {
+            failures.push(`“${title}” wasn't created (${await responseError(res)})`);
+            continue;
+          }
+          const row: Section = await res.json();
+          draft.id = row.id;
+          saved = [...saved, row];
+        }
       }
 
-      const newSections: Section[] = [];
-      for (const section of parsed) {
-        const res = await fetch(`/api/clients/${clientSlug}/brand-intel`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: section.title,
-            content: section.content,
-            sortOrder: section.sortOrder,
-          }),
-        });
-        if (res.ok) newSections.push(await res.json());
+      const kept = new Set(next.map((d) => d.id));
+      for (const section of saved.filter((s) => !kept.has(s.id))) {
+        const res = await fetch(`${base}/${section.id}`, { method: "DELETE" });
+        // 404: already gone, which is what removing it asked for.
+        if (!res.ok && res.status !== 404) {
+          failures.push(`“${section.title}” wasn't removed (${await responseError(res)})`);
+          continue;
+        }
+        saved = saved.filter((s) => s.id !== section.id);
       }
+    } catch {
+      failures.push("Network error — check your connection and save again.");
+    }
 
-      setSections(newSections);
+    setSections(saved);
+    setSaving(false);
+    if (failures.length) {
+      setDrafts(next);
+      setSaveError(`Some changes didn't save: ${failures.join("; ")}.`);
+    } else {
+      setDrafts([]);
       setEditing(false);
-    } finally {
-      setSaving(false);
     }
   };
 
-  const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setDraft(e.target.value);
-    e.target.style.height = "auto";
-    e.target.style.height = Math.max(400, e.target.scrollHeight) + "px";
-  };
-
-  const sourceContent = draft;
+  const sourceContent = useMemo(
+    () => (editing ? toDocument(drafts) : toDocument(sortSections(sections))),
+    [editing, drafts, sections],
+  );
   const processed = useMemo(() => preprocessBrandIntel(sourceContent), [sourceContent]);
   const toc = useMemo(() => extractToc(processed), [processed]);
   const stats = useMemo(() => readingStats(sourceContent), [sourceContent]);
@@ -229,7 +343,9 @@ export function ClientBrandIntelEditor({ clientSlug }: { clientSlug: string }) {
             <CardTitle className="text-lg">Brand Intelligence Document</CardTitle>
             {!editing && (
               <p className="text-xs text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                {sourceContent ? (
+                {loadError ? (
+                  <span className="text-red-600 dark:text-red-400">Couldn&apos;t load</span>
+                ) : sourceContent ? (
                   <>
                     <span className="inline-flex items-center gap-1">
                       <FileText className="h-3 w-3" />
@@ -305,9 +421,12 @@ export function ClientBrandIntelEditor({ clientSlug }: { clientSlug: string }) {
                 </Button>
               </>
             ) : (
-              <Button variant="outline" size="sm" onClick={handleEdit}>
-                <Pencil className="mr-1 h-3.5 w-3.5" /> Edit
-              </Button>
+              !loading &&
+              !loadError && (
+                <Button variant="outline" size="sm" onClick={handleEdit}>
+                  <Pencil className="mr-1 h-3.5 w-3.5" /> Edit
+                </Button>
+              )
             )}
           </div>
         )}
@@ -319,15 +438,28 @@ export function ClientBrandIntelEditor({ clientSlug }: { clientSlug: string }) {
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
+          ) : loadError ? (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">
+              {loadError}
+            </p>
           ) : editing ? (
-            <EditView
-              draft={draft}
-              onChange={(v) => setDraft(v)}
-              onInput={handleTextareaInput}
-              processed={processed}
-              mode={editPreview}
-              textareaRef={textareaRef}
-            />
+            <>
+              {saveError && (
+                <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">
+                  {saveError}
+                </p>
+              )}
+              <EditView
+                drafts={drafts}
+                processed={processed}
+                mode={editPreview}
+                disabled={saving}
+                onChange={updateDraft}
+                onMove={moveDraft}
+                onRemove={removeDraft}
+                onAdd={() => setDrafts((prev) => [...prev, blankDraft()])}
+              />
+            </>
           ) : sourceContent.trim() ? (
             <ReadView
               processed={processed}
@@ -472,20 +604,35 @@ function ReadView({
 
 /* ─── Edit view ─── */
 
+function AutoGrowTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(120, el.scrollHeight)}px`;
+  }, [props.value]);
+  return <textarea ref={ref} {...props} />;
+}
+
 function EditView({
-  draft,
-  onChange,
-  onInput,
+  drafts,
   processed,
   mode,
-  textareaRef,
+  disabled,
+  onChange,
+  onMove,
+  onRemove,
+  onAdd,
 }: {
-  draft: string;
-  onChange: (v: string) => void;
-  onInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  drafts: DraftSection[];
   processed: string;
   mode: "edit" | "split" | "preview";
-  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  disabled: boolean;
+  onChange: (key: string, patch: Partial<Pick<DraftSection, "title" | "content">>) => void;
+  onMove: (key: string, delta: -1 | 1) => void;
+  onRemove: (draft: DraftSection) => void;
+  onAdd: () => void;
 }) {
   const showEdit = mode === "edit" || mode === "split";
   const showPreview = mode === "preview" || mode === "split";
@@ -493,17 +640,70 @@ function EditView({
   return (
     <div className={cn("grid gap-4", mode === "split" ? "lg:grid-cols-2" : "grid-cols-1")}>
       {showEdit && (
-        <textarea
-          ref={textareaRef}
-          value={draft}
-          onChange={(e) => {
-            onChange(e.target.value);
-            onInput(e);
-          }}
-          placeholder={"## Core Identity & Mission\n\nDescribe the brand's core identity...\n\n---\n\n## Target Customer Profile\n\nDescribe the ideal customer..."}
-          className="w-full min-h-[400px] rounded-lg border border-input bg-background p-4 text-sm font-mono leading-relaxed outline-none resize-none focus:border-foreground/20 focus:ring-2 focus:ring-foreground/5 transition-all"
-          spellCheck
-        />
+        <div className="space-y-3">
+          {drafts.map((d, i) => (
+            <div
+              key={d.key}
+              className="rounded-lg border border-input bg-background transition-all focus-within:border-foreground/20 focus-within:ring-2 focus-within:ring-foreground/5"
+            >
+              <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+                <input
+                  value={d.title}
+                  onChange={(e) => onChange(d.key, { title: e.target.value })}
+                  placeholder="Section title"
+                  disabled={disabled}
+                  className="min-w-0 flex-1 bg-transparent text-sm font-semibold outline-none"
+                />
+                {d.sectionType && (
+                  <span
+                    title="Other systems find this section by its type"
+                    className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                  >
+                    {d.sectionType}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onMove(d.key, -1)}
+                  disabled={disabled || i === 0}
+                  aria-label="Move section up"
+                  className="rounded p-1 text-muted-foreground hover:bg-accent/40 disabled:opacity-30"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onMove(d.key, 1)}
+                  disabled={disabled || i === drafts.length - 1}
+                  aria-label="Move section down"
+                  className="rounded p-1 text-muted-foreground hover:bg-accent/40 disabled:opacity-30"
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRemove(d)}
+                  disabled={disabled}
+                  aria-label="Remove section"
+                  className="rounded p-1 text-muted-foreground hover:bg-accent/40 hover:text-red-600 disabled:opacity-30"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <AutoGrowTextarea
+                value={d.content}
+                onChange={(e) => onChange(d.key, { content: e.target.value })}
+                placeholder="Write this section in Markdown…"
+                disabled={disabled}
+                className="block w-full resize-none bg-transparent p-3 text-sm font-mono leading-relaxed outline-none"
+                spellCheck
+              />
+            </div>
+          ))}
+          <Button variant="outline" size="sm" onClick={onAdd} disabled={disabled}>
+            <Plus className="mr-1 h-3.5 w-3.5" /> Add section
+          </Button>
+        </div>
       )}
       {showPreview && (
         <article

@@ -7,8 +7,9 @@ export const maxDuration = 300;
 
 /**
  * GET /api/cron/monthly-planning-sweep
- * Steps every active monthly plan: generate briefs → produce static → poll →
- * schedule completed into the posting queue. Runs every 15 min (Neon quota).
+ * Steps every active monthly plan: continue stalled planning → generate briefs → produce
+ * static → poll → schedule completed, QC-cleared ads into the posting queue. Runs every
+ * 30 min during Sydney daytime (Neon quota).
  * ?dryRun=1 exercises the loop without Claude/Kie calls or DB writes.
  */
 export async function GET(req: NextRequest) {

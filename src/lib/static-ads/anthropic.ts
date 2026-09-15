@@ -5,9 +5,21 @@
 
 import sharp from "sharp";
 import { downloadFromR2, r2KeyFromUrl, toExternalUrl } from "@/lib/r2";
+import { getApiKey as getConfiguredKey } from "@/lib/api-keys";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const MODEL = "claude-sonnet-4-6";
+
+/** Extended thinking rejects budgets below this with a 400. */
+const MIN_THINKING_BUDGET = 1024;
+
+// Transient-failure retry (429 / 529 / 5xx / overloaded_error). Bounded so a call still
+// fits the 300s routes that chain several of them: at most 3 retries, 30s of waiting.
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 2000;
+const RETRY_MAX_DELAY_MS = 15000;
+const RETRY_TOTAL_WAIT_MS = 30000;
+const RETRYABLE_ERROR_TYPES = new Set(["overloaded_error", "rate_limit_error", "api_error"]);
 
 // Claude's base64 image limit is 5MB. Base64 adds ~33% overhead,
 // so we target 3.5MB raw to stay safely under the limit.
@@ -15,10 +27,31 @@ const MAX_RAW_BYTES = 3_500_000;
 const MAX_DIMENSION = 1568; // Claude's recommended max for vision
 const JPEG_QUALITY = 85;
 
-function getApiKey(): string {
-  const key = (process.env.ANTHROPIC_API_KEY || "").trim();
-  if (!key) throw new Error("ANTHROPIC_API_KEY environment variable is not set");
+/**
+ * The key a call runs with: an explicit override, else the key saved in Settings → API Keys
+ * (encrypted vault), else the ANTHROPIC_API_KEY env var — getApiKey() does the last fallback.
+ */
+async function resolveApiKey(override?: string): Promise<string> {
+  const explicit = (override || "").trim();
+  if (explicit) return explicit;
+  const key = (await getConfiguredKey("ANTHROPIC_API_KEY")).trim();
+  if (!key) throw new Error("ANTHROPIC_API_KEY is not configured — add it in Settings → API Keys");
   return key;
+}
+
+function retryDelayMs(attempt: number, retryAfter: string | null): number {
+  const retryAfterSeconds = retryAfter ? Number(retryAfter) : NaN;
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return Math.min(retryAfterSeconds * 1000, RETRY_MAX_DELAY_MS);
+  }
+  const backoff = Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS);
+  return backoff * (0.8 + Math.random() * 0.4);
+}
+
+function isRetryableHttpFailure(status: number, body: string, shouldRetryHeader: string | null): boolean {
+  if (shouldRetryHeader === "false") return false;
+  if (shouldRetryHeader === "true") return true;
+  return status === 429 || status === 529 || status >= 500 || body.includes("overloaded_error");
 }
 
 type ContentBlock =
@@ -43,6 +76,12 @@ type CallClaudeOptions = {
 type CallClaudeResult = {
   text: string;
   thinkingText?: string;
+};
+
+type AnthropicResponseBody = {
+  type?: string;
+  error?: { type?: string; message?: string };
+  content?: Array<{ type: string; text?: string; thinking?: string }>;
 };
 
 /**
@@ -74,7 +113,7 @@ async function ensureImageFitsLimit(
   }
 
   // Resize to max dimension and convert to JPEG
-  let img = sharp(buffer).resize(MAX_DIMENSION, MAX_DIMENSION, {
+  const img = sharp(buffer).resize(MAX_DIMENSION, MAX_DIMENSION, {
     fit: "inside",
     withoutEnlargement: true,
   });
@@ -161,39 +200,72 @@ export async function imageUrlToBase64Block(
 
 export async function callClaude(options: CallClaudeOptions): Promise<CallClaudeResult> {
   const { system, messages, maxTokens = 16000, budgetTokens = 10000, model, apiKey } = options;
-  const key = (apiKey || "").trim() || getApiKey();
+  const key = await resolveApiKey(apiKey);
 
-  const response = await fetch(ANTHROPIC_API_URL, {
-    method: "POST",
-    headers: {
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: model || MODEL,
-      max_tokens: maxTokens,
-      thinking: { type: "enabled", budget_tokens: budgetTokens },
-      system,
-      messages,
-    }),
+  // Keep the request valid: the API 400s on a budget under the minimum, or on
+  // max_tokens that doesn't exceed the budget.
+  const thinkingBudget = Math.max(budgetTokens, MIN_THINKING_BUDGET);
+  const requestMaxTokens = maxTokens > thinkingBudget ? maxTokens : thinkingBudget + MIN_THINKING_BUDGET;
+  const body = JSON.stringify({
+    model: model || MODEL,
+    max_tokens: requestMaxTokens,
+    thinking: { type: "enabled", budget_tokens: thinkingBudget },
+    system,
+    messages,
   });
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Anthropic API error (${response.status}): ${text}`);
-  }
+  let waitedMs = 0;
+  let json: AnthropicResponseBody | null = null;
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: "POST",
+      headers: {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body,
+    });
 
-  const json = await response.json();
+    const canRetry = attempt < MAX_RETRIES && waitedMs < RETRY_TOTAL_WAIT_MS;
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      if (canRetry && isRetryableHttpFailure(response.status, text, response.headers.get("x-should-retry"))) {
+        const delay = retryDelayMs(attempt, response.headers.get("retry-after"));
+        console.warn(`[anthropic] ${response.status} — retry ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay)}ms`);
+        waitedMs += delay;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      throw new Error(`Anthropic API error (${response.status}): ${text}`);
+    }
+
+    json = (await response.json()) as AnthropicResponseBody;
+
+    // An error can also arrive inside a 200 body (e.g. relayed by a proxy).
+    if (json?.type === "error") {
+      const errorType = json.error?.type || "error";
+      if (canRetry && RETRYABLE_ERROR_TYPES.has(errorType)) {
+        const delay = retryDelayMs(attempt, null);
+        console.warn(`[anthropic] ${errorType} — retry ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay)}ms`);
+        waitedMs += delay;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      throw new Error(`Anthropic API error (${errorType}): ${json.error?.message || JSON.stringify(json)}`);
+    }
+    break;
+  }
 
   let text = "";
   let thinkingText = "";
 
-  for (const block of json.content || []) {
+  for (const block of json?.content || []) {
     if (block.type === "text") {
-      text += block.text;
+      text += block.text ?? "";
     } else if (block.type === "thinking") {
-      thinkingText += block.thinking;
+      thinkingText += block.thinking ?? "";
     }
   }
 

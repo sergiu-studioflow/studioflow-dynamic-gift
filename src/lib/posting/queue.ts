@@ -75,49 +75,58 @@ export async function queuePost(input: QueueInput): Promise<QueueResult> {
     })
     .returning();
 
-  // 4. Build per-platform targets (placement routing + IG re-encode as needed).
-  const storageBase = (await getClientStoragePrefix(src.clientId)) || `brands/${BRAND_SLUG}`;
-
+  // 4. Build per-platform targets (placement routing + IG re-encode).
   const targetRows: (typeof schema.postTargets.$inferInsert)[] = [];
-  for (const platform of activePlatforms) {
-    const route = routePlacement(platform, src.mediaType, probed.width, probed.height);
-    let mediaOverrideUrl: string | null = null;
+  try {
+    const storageBase = (await getClientStoragePrefix(src.clientId)) || `brands/${BRAND_SLUG}`;
 
-    if (platform === "instagram" && src.mediaType === "image") {
-      if (src.reviewAssets) {
-        // review_graphic: use the pre-rendered per-format asset.
-        const chosen = route.placement === "story" ? src.reviewAssets.story : src.reviewAssets.ig_feed;
-        if (chosen) mediaOverrideUrl = toExternalUrl(chosen);
-      } else if (route.needsIgCrop) {
+    for (const platform of activePlatforms) {
+      const route = routePlacement(platform, src.mediaType, probed.width, probed.height);
+      let mediaOverrideUrl: string | null = null;
+
+      if (platform === "instagram" && src.mediaType === "image") {
+        // IG content publishing accepts JPEG only (≤ 8 MB) and static ads / review
+        // graphics are PNG, so every IG image target gets its own JPEG variant.
+        // review_graphic: start from the pre-rendered per-format asset when there is one.
+        const chosen = src.reviewAssets
+          ? route.placement === "story" ? src.reviewAssets.story : src.reviewAssets.ig_feed
+          : undefined;
+        const igSource = chosen || src.mediaUrl;
         mediaOverrideUrl = await makeIgVariant({
-          sourceUrl: src.mediaUrl,
+          sourceUrl: igSource,
           storageBase,
           postId: parent.id,
-          crop: true,
+          // The route was computed from the primary media's dimensions.
+          crop: route.needsIgCrop && igSource === src.mediaUrl,
         });
-      } else {
-        // Ensure Meta's crawler can reach the image (external public R2 host).
-        mediaOverrideUrl = toExternalUrl(src.mediaUrl);
       }
-    }
-    if (platform === "facebook" && src.reviewAssets?.fb) {
-      mediaOverrideUrl = toExternalUrl(src.reviewAssets.fb);
+      if (platform === "facebook" && src.reviewAssets?.fb) {
+        mediaOverrideUrl = toExternalUrl(src.reviewAssets.fb);
+      }
+
+      const account = accountByPlatform.get(platform);
+      targetRows.push({
+        postId: parent.id,
+        clientId: src.clientId,
+        socialAccountId: account?.id ?? null,
+        platform,
+        placement: route.placement,
+        enabled: true,
+        mediaOverrideUrl,
+        status: "pending",
+      });
     }
 
-    const account = accountByPlatform.get(platform);
-    targetRows.push({
-      postId: parent.id,
-      clientId: src.clientId,
-      socialAccountId: account?.id ?? null,
-      platform,
-      placement: route.placement,
-      enabled: true,
-      mediaOverrideUrl,
-      status: "pending",
-    });
+    await db.insert(schema.postTargets).values(targetRows);
+  } catch (err) {
+    // Don't leave a half-built 'generating' post in the queue forever.
+    try {
+      await db.delete(schema.scheduledPosts).where(eq(schema.scheduledPosts.id, parent.id));
+    } catch (cleanupErr) {
+      console.error(`[posting/queue] could not remove half-built post ${parent.id}:`, cleanupErr);
+    }
+    throw err;
   }
-
-  await db.insert(schema.postTargets).values(targetRows);
 
   // 5. Captions.
   let angleTag: string | null = null;

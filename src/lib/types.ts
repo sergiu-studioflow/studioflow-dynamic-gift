@@ -1,5 +1,6 @@
 // Core types — matches the base schema (Better Auth + users + appConfig + brandIntelligence + activityLog)
-// Client-specific types are added when new systems are migrated into the portal
+// Client-specific types are added when new systems are migrated into the portal.
+// (`toClient` is the one runtime helper here: it lives beside the type it produces.)
 
 import type { brands } from "@/lib/db/schema";
 
@@ -190,29 +191,15 @@ export type BrandIntelligence = {
  *  hand-written: renaming the column must fail the build, not blank the pickers. */
 export type BrandOption = Pick<typeof brands.$inferSelect, "id" | "brandName">;
 
-export type Client = {
-  id: string;
-  brandName: string;
-  clientName: string;
-  clientSlug: string | null;
-  isActive: boolean;
-  sortOrder: number;
-  website: string | null;
-  category: string | null;
-  primaryMarket: string | null;
-  currency: string | null;
-  cluster: string | null;
-  logoUrl: string | null;
-  brandColor: string | null;
-  monthlyAdSpend: number | null;
-  status: string;
-  storagePrefix: string;
-  settings: Record<string, unknown>;
-  notes: string | null;
-  provisionedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-};
+/** A brand as the /api/clients routes return it: the schema row plus `clientName`, which the
+ *  client pages and the switcher read. Derived from the schema, not hand-written — the old
+ *  hand-copied type promised a `clientName` the routes never sent, and every client page
+ *  crashed on it. Build one with `toClient`, never by casting a row. */
+export type Client = typeof brands.$inferSelect & { clientName: string };
+
+export function toClient(row: typeof brands.$inferSelect): Client {
+  return { ...row, clientName: row.brandName };
+}
 
 export type ClientBrandIntel = { id: string; clientId: string; title: string; content: string | null; sectionType: string | null; sortOrder: number; createdAt: Date; updatedAt: Date };
 export type ClientProduct = { id: string; clientId: string; productName: string; category: string | null; keyBenefits: string | null; targetUseCase: string | null; isHeroProduct: boolean; price: string | null; productUrl: string | null; imageUrl: string | null; videoImageUrl: string | null; status: string; createdAt: Date; updatedAt: Date };

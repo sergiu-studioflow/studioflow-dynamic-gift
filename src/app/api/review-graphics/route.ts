@@ -12,7 +12,8 @@ export const maxDuration = 60;
 /**
  * GET /api/review-graphics?clientId=&status=
  * Lists generated review graphics (parent + per-format assets) for a brand.
- * Sweeps in-flight Kie jobs first so completed images surface immediately.
+ * `status` is one status, a comma-separated list (e.g. "generating,draft,error"),
+ * or "all". Sweeps in-flight Kie jobs first so completed images surface immediately.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -20,7 +21,10 @@ export async function GET(req: NextRequest) {
     if (isAuthError(authResult)) return authResult;
 
     const clientId = req.nextUrl.searchParams.get("clientId");
-    const status = req.nextUrl.searchParams.get("status");
+    const statuses = (req.nextUrl.searchParams.get("status") || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
     const limit = Math.min(parseInt(req.nextUrl.searchParams.get("limit") || "60", 10), 200);
 
     // Progress any in-flight generations before reading.
@@ -29,7 +33,9 @@ export async function GET(req: NextRequest) {
 
     const conditions = [];
     if (clientId) conditions.push(eq(schema.reviewGraphics.clientId, clientId));
-    if (status && status !== "all") conditions.push(eq(schema.reviewGraphics.status, status));
+    if (statuses.length > 0 && !statuses.includes("all")) {
+      conditions.push(inArray(schema.reviewGraphics.status, statuses));
+    }
 
     const graphics = await db
       .select()

@@ -24,6 +24,7 @@ type Character = {
   imagePreviewUrl: string;
   description: string | null;
   status: string;
+  errorMessage?: string | null;
 };
 
 type GenerateState =
@@ -117,6 +118,32 @@ export function CharactersLibrary() {
 
   useEffect(() => { load(); }, [load]);
 
+  // While any character is still generating, re-list quietly: the list endpoint finishes
+  // (or fails) those renders server-side, so a card never sits on "Generating..." forever.
+  const hasGenerating = characters.some((c) => c.status === "generating");
+  useEffect(() => {
+    if (!hasGenerating || !clientId) return;
+    const interval = setInterval(() => {
+      fetch(`/api/characters?clientId=${clientId}`)
+        .then((r) => r.json())
+        .then((data: Character[]) => {
+          if (!Array.isArray(data)) return;
+          // Keep unchanged cards as-is: every listing re-signs preview URLs, and a new URL
+          // would re-download every image on each poll.
+          setCharacters((prev) =>
+            data.map((next) => {
+              const cur = prev.find((c) => c.id === next.id);
+              return cur && cur.status === next.status && cur.imageUrl === next.imageUrl && cur.description === next.description
+                ? cur
+                : next;
+            })
+          );
+        })
+        .catch(() => { /* transient */ });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [hasGenerating, clientId]);
+
   // Poll for generating characters
   useEffect(() => {
     if (genState.phase !== "generating") return;
@@ -132,6 +159,9 @@ export function CharactersLibrary() {
           load();
         } else if (data.status === "error") {
           setGenState({ phase: "error", message: data.errorMessage || "Generation failed" });
+          load();
+        } else if (res.status === 404) {
+          setGenState({ phase: "error", message: "This character no longer exists" });
         }
       } catch { /* transient */ }
     }, 3000);
@@ -276,6 +306,15 @@ export function CharactersLibrary() {
     genState.phase === "pipeline" ? buildGenerateSteps(genState.currentStep)
     : genState.phase === "generating" ? buildGenerateSteps(2)
     : [];
+
+  if (!clientId) {
+    return (
+      <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border py-16 text-center text-sm text-muted-foreground">
+        <Users className="h-6 w-6" />
+        <p className="max-w-sm">Select a brand from the switcher to see and create its characters.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -470,7 +509,8 @@ export function CharactersLibrary() {
         <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
           {characters.map((c) => (
             <div key={c.id}
-              onClick={() => c.status === "ready" && toggleSelect(c.id)}
+              onClick={() => c.status !== "generating" && toggleSelect(c.id)}
+              title={c.status === "error" ? c.errorMessage || "Generation failed" : undefined}
               className={cn(
                 "rounded-xl border-2 overflow-hidden transition-all group",
                 c.status === "generating" ? "border-primary/30 opacity-70" :
@@ -500,7 +540,7 @@ export function CharactersLibrary() {
               <div className="px-2 py-1.5">
                 <p className="text-[10px] font-medium text-foreground truncate">{c.name}</p>
                 {c.status === "generating" && <p className="text-[9px] text-primary truncate">Generating...</p>}
-                {c.status === "error" && <p className="text-[9px] text-red-500 truncate">Error</p>}
+                {c.status === "error" && <p className="text-[9px] text-red-500 truncate">{c.errorMessage || "Error"}</p>}
                 {c.status === "ready" && c.description && <p className="text-[9px] text-muted-foreground/60 truncate">{c.description}</p>}
               </div>
             </div>

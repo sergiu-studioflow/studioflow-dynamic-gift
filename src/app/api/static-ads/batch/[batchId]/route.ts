@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, notInArray } from "drizzle-orm";
 import { toAccessibleUrl } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
@@ -10,9 +10,10 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/static-ads/batch/[batchId]
  *
- * Returns every static_ad_generations row in the given batch, ordered by
- * batch_index. Used by the gallery detail dialog when the user opens a
- * batched card to view all sibling variations.
+ * Returns the final rows in the given batch, ordered by batch_index. Used by the
+ * gallery detail dialog when the user opens a batched card to view all sibling
+ * variations. The batch id is shared by every stage of the refined chain, so the
+ * intermediate / logo-refined artifacts are excluded exactly as the gallery does.
  */
 export async function GET(
   _req: NextRequest,
@@ -30,7 +31,12 @@ export async function GET(
     const rows = await db
       .select()
       .from(schema.staticAdGenerations)
-      .where(eq(schema.staticAdGenerations.batchId, batchId))
+      .where(
+        and(
+          eq(schema.staticAdGenerations.batchId, batchId),
+          notInArray(schema.staticAdGenerations.mode, ["intermediate", "logo-refined"])
+        )
+      )
       .orderBy(asc(schema.staticAdGenerations.batchIndex), asc(schema.staticAdGenerations.createdAt));
 
     if (rows.length === 0) {

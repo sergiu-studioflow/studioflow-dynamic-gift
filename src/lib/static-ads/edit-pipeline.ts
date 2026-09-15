@@ -558,6 +558,17 @@ export type TextElement = {
 };
 
 /**
+ * The edit command approved nothing (every change blocked or unmatched). Thrown before
+ * anything is inserted or submitted, so a no-op edit never becomes a paid Kie job.
+ */
+export class NoApplicableEditsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NoApplicableEditsError";
+  }
+}
+
+/**
  * Agent 1: Extract all text elements from an ad image.
  * Returns raw JSON string.
  */
@@ -639,8 +650,8 @@ export async function formatForEditing(analysisJson: string): Promise<TextElemen
     // Skip the closing instruction line
     if (trimmed.startsWith("To change a line") || trimmed.startsWith('"To change')) continue;
 
-    // Parse "Element Name: "text content""
-    const match = trimmed.match(/^(.+?):\s*"(.+)"$/);
+    // Parse "Element Name: "text content"" (straight or curly quotes)
+    const match = trimmed.match(/^(.+?):\s*["\u201C](.+)["\u201D]$/);
     if (match) {
       const name = match[1].trim();
       const currentText = match[2].trim();
@@ -658,6 +669,12 @@ export async function formatForEditing(analysisJson: string): Promise<TextElemen
 
       elements.push({ name, currentText, editPriority: priority });
     }
+  }
+
+  if (elements.length === 0) {
+    throw new Error(
+      "No editable text was found in this ad — the text reader returned nothing usable. Try again, or pick a different ad."
+    );
   }
 
   return elements;
@@ -706,25 +723,51 @@ ${editRequest}`,
   return text;
 }
 
+/** Plain-English list of the requests Agent 3 blocked or couldn't match. */
+function describeRejectedRequests(command: Record<string, unknown> | undefined): string {
+  const describe = (item: unknown): string => {
+    if (typeof item === "string") return item;
+    if (item && typeof item === "object") {
+      const o = item as Record<string, unknown>;
+      const label = o.plain_english_name || o.request || o.element || o.name;
+      const reason = o.reason || o.notes;
+      if (label && reason) return `${label}: ${reason}`;
+      if (label || reason) return String(label || reason);
+    }
+    return "";
+  };
+  const blocked = Array.isArray(command?.blocked_requests) ? command.blocked_requests : [];
+  const unmatched = Array.isArray(command?.unmatched_requests) ? command.unmatched_requests : [];
+  const parts = [
+    ...blocked.map((b) => describe(b)).filter(Boolean).map((b) => `Blocked — ${b}`),
+    ...unmatched.map((u) => describe(u)).filter(Boolean).map((u) => `Not found — ${u}`),
+  ];
+  return parts.join("; ");
+}
+
 /**
  * Build a Kie AI prompt from the edit command JSON.
  * The prompt instructs Kie to reproduce the image with text changes only.
  */
 export function buildEditPrompt(editCommandJson: string): string {
-  let cmd: Record<string, any>;
+  let cmd: { edit_command?: Record<string, unknown> };
   try {
     cmd = JSON.parse(editCommandJson);
   } catch {
     throw new Error("Invalid edit command JSON — could not parse Agent 5 output");
   }
-  const edits = cmd.edit_command?.edits || [];
+  const rawEdits = cmd.edit_command?.edits;
+  const allEdits = Array.isArray(rawEdits) ? (rawEdits as Record<string, unknown>[]) : [];
+  const edits = allEdits.filter((e) => e.status === "approved");
 
   if (edits.length === 0) {
-    throw new Error("No approved edits in the edit command");
+    const detail = describeRejectedRequests(cmd.edit_command);
+    throw new NoApplicableEditsError(
+      `None of the requested edits can be applied, so nothing was generated.${detail ? ` ${detail}.` : ""}`
+    );
   }
 
   const textChanges = edits
-    .filter((e: Record<string, unknown>) => e.status === "approved")
     .map((e: Record<string, unknown>) => {
       const loc = e.location as Record<string, unknown> || {};
       const typo = e.typography_preserve as Record<string, unknown> || {};

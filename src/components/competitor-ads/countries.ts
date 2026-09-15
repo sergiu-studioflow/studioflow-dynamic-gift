@@ -1,6 +1,16 @@
 // Meta Ad Library supported countries — ISO 3166-1 alpha-2 codes
 // These are the exact codes Meta accepts in the &country= URL parameter
 
+/**
+ * Country for every Meta Ad Library scrape and link. client_competitors has no
+ * country column, and all of Dynamic Gift's brands sell in Australia.
+ */
+export const DEFAULT_META_AD_COUNTRY = "AU";
+
+export function isMetaAdCountry(code: string): boolean {
+  return META_AD_COUNTRIES.some((c) => c.value === code);
+}
+
 export const META_AD_COUNTRIES = [
   { value: "ALL", label: "All Countries" },
   { value: "AF", label: "Afghanistan" },

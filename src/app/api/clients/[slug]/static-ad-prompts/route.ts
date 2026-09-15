@@ -12,8 +12,13 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
-import { and, desc, eq } from "drizzle-orm";
-import { executePromptJob } from "@/lib/static-ads/prompt-builder/job-runner";
+import { and, asc, desc, eq, ne } from "drizzle-orm";
+import {
+  executePromptJob,
+  promptsArePlaceholder,
+  SNAPSHOT_STATUS,
+  snapshotWasPlaceholder,
+} from "@/lib/static-ads/prompt-builder/job-runner";
 
 export const dynamic = "force-dynamic";
 // The build runs in this invocation's after() phase. The pipeline is ~4-8 min
@@ -50,7 +55,6 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (!client) return NextResponse.json({ error: "Brand not found" }, { status: 404 });
 
   const settings = (client.settings ?? {}) as {
-    staticAdPromptsArePlaceholder?: boolean;
     brandType?: string;
     staticAdReferenceUrls?: string[];
     brandGuidelines?: {
@@ -87,9 +91,46 @@ export async function GET(_req: NextRequest, { params }: Params) {
       publishedAt: schema.clientStaticAdPromptJobs.publishedAt,
     })
     .from(schema.clientStaticAdPromptJobs)
-    .where(eq(schema.clientStaticAdPromptJobs.clientId, client.id))
+    .where(
+      and(
+        eq(schema.clientStaticAdPromptJobs.clientId, client.id),
+        ne(schema.clientStaticAdPromptJobs.status, SNAPSHOT_STATUS)
+      )
+    )
     .orderBy(desc(schema.clientStaticAdPromptJobs.createdAt))
     .limit(10);
+
+  // Prompts that were live before a publish/restore replaced them — listed apart
+  // from build history so the originals never scroll out of reach. The oldest is
+  // always included: for most brands that is the hand-authored set.
+  const snapshotColumns = {
+    id: schema.clientStaticAdPromptJobs.id,
+    replacedAt: schema.clientStaticAdPromptJobs.createdAt,
+    liveSince: schema.clientStaticAdPromptJobs.publishedAt,
+    brandDna: schema.clientStaticAdPromptJobs.brandDna,
+  };
+  const snapshotScope = and(
+    eq(schema.clientStaticAdPromptJobs.clientId, client.id),
+    eq(schema.clientStaticAdPromptJobs.status, SNAPSHOT_STATUS)
+  );
+  const [recentSnapshots, [oldestSnapshot]] = await Promise.all([
+    db
+      .select(snapshotColumns)
+      .from(schema.clientStaticAdPromptJobs)
+      .where(snapshotScope)
+      .orderBy(desc(schema.clientStaticAdPromptJobs.createdAt))
+      .limit(10),
+    db
+      .select(snapshotColumns)
+      .from(schema.clientStaticAdPromptJobs)
+      .where(snapshotScope)
+      .orderBy(asc(schema.clientStaticAdPromptJobs.createdAt))
+      .limit(1),
+  ]);
+  const snapshotRows =
+    oldestSnapshot && !recentSnapshots.some((s) => s.id === oldestSnapshot.id)
+      ? [...recentSnapshots, oldestSnapshot]
+      : recentSnapshots;
 
   const productCount = await db
     .select({ id: schema.clientProducts.id })
@@ -97,8 +138,9 @@ export async function GET(_req: NextRequest, { params }: Params) {
     .where(eq(schema.clientProducts.clientId, client.id));
 
   return NextResponse.json({
-    // No config row at all also means "not real prompts yet".
-    isPlaceholder: !config || settings.staticAdPromptsArePlaceholder !== false,
+    // Placeholder only when provisioning flagged it (or there is no config row at
+    // all). A missing flag is a brand whose prompts were written by hand.
+    isPlaceholder: !config || promptsArePlaceholder(client.settings),
     hasConfig: !!config,
     brandType: settings.brandType ?? "products",
     vertical: client.vertical,
@@ -107,6 +149,12 @@ export async function GET(_req: NextRequest, { params }: Params) {
     referenceUrls: Array.isArray(settings.staticAdReferenceUrls) ? settings.staticAdReferenceUrls : [],
     promptsUpdatedAt: config?.updatedAt ?? null,
     jobs,
+    snapshots: snapshotRows.map((s) => ({
+      id: s.id,
+      replacedAt: s.replacedAt,
+      liveSince: s.liveSince,
+      wasPlaceholder: snapshotWasPlaceholder(s.brandDna),
+    })),
   });
 }
 

@@ -10,7 +10,7 @@
 //     needs a durable R2 asset. The lazy-persist branch re-calls enqueue once the R2 URL
 //     lands. Text reviews have no asset and must enqueue without one.
 
-import { and, eq, isNull, type AnyColumn } from "drizzle-orm";
+import { and, eq, inArray, isNull, type AnyColumn } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { r2KeyFromUrl } from "@/lib/r2";
 import { QC_EXEMPT_STATIC_MODES, laneFor, type SourceSystem } from "./constants";
@@ -115,6 +115,31 @@ export async function enqueueGateReview(o: {
   } catch (e) {
     console.warn("[qc] enqueueGateReview failed", String(e).slice(0, 200));
   }
+}
+
+/**
+ * Delete the gate reviews of a text request's generated rows. Call it BEFORE those rows are
+ * deleted (request delete / re-generate): gate_reviews has no FK to the source tables, so
+ * without this the queue keeps reviews of output that no longer exists — they fail to grade
+ * ("source row is missing") and sit in Quality Control with nothing to act on.
+ */
+export async function deleteTextReviewsForRequest(
+  sourceSystem: "ideation" | "ad_copy" | "video_brief",
+  requestId: string
+): Promise<void> {
+  const sourceIds =
+    sourceSystem === "ideation"
+      ? db.select({ id: schema.contentIdeas.id }).from(schema.contentIdeas).where(eq(schema.contentIdeas.requestId, requestId))
+      : sourceSystem === "ad_copy"
+        ? db.select({ id: schema.generatedAdCopy.id }).from(schema.generatedAdCopy).where(eq(schema.generatedAdCopy.requestId, requestId))
+        : db
+            .select({ id: schema.generatedVideoBriefs.id })
+            .from(schema.generatedVideoBriefs)
+            .where(eq(schema.generatedVideoBriefs.requestId, requestId));
+
+  await db
+    .delete(schema.gateReviews)
+    .where(and(eq(schema.gateReviews.sourceSystem, sourceSystem), inArray(schema.gateReviews.sourceId, sourceIds)));
 }
 
 /** Enqueue a batch of text rows from one n8n completion webhook. Sequential by design:

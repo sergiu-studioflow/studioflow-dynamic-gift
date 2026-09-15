@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Loader2, Package, Trash2, Plus, Pencil, X, Check, Upload as UploadIcon, Video, ChevronRight } from "lucide-react";
-import { useClient } from "@/lib/client-context";
 
 type Product = {
   id: string;
@@ -15,12 +14,74 @@ type Product = {
   status: string;
 };
 
-export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
-  const { clientId } = useClient();
+// Vercel rejects request bodies over 4.5 MB before /api/upload ever runs (a bare 413),
+// so anything bigger is re-encoded in the browser first.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+// What /api/upload accepts as images; anything else (HEIC, AVIF, TIFF…) is re-encoded.
+const UPLOADABLE_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+async function responseError(res: Response, fallback: string): Promise<string> {
+  if (res.status === 413) return "That image is too large to upload.";
+  const data = await res.json().catch(() => null);
+  return (data && typeof data.error === "string" && data.error) || `${fallback} (${res.status})`;
+}
+
+function loadImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const src = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(src);
+      if (!img.naturalWidth || !img.naturalHeight) reject(new Error(`Couldn't read the size of ${file.name} — export it as JPEG or PNG and try again.`));
+      else resolve(img);
+    };
+    // Without this an undecodable file (e.g. HEIC outside Safari) left the spinner running forever.
+    img.onerror = () => {
+      URL.revokeObjectURL(src);
+      reject(new Error(`This browser can't open ${file.name} — export it as JPEG or PNG and try again.`));
+    };
+    img.src = src;
+  });
+}
+
+/** Re-encode as JPEG, scaled to fit maxSide, shrinking further until it fits the upload limit. */
+async function toUploadableJpeg(file: File, maxSide: number): Promise<File> {
+  const img = await loadImage(file);
+  let side = maxSide;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const scale = Math.min(1, side / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Couldn't prepare the image for upload.");
+    // JPEG has no transparency: paint white first or transparent areas come out black.
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    if (!blob) throw new Error("Couldn't re-encode the image for upload.");
+    if (blob.size <= MAX_UPLOAD_BYTES) {
+      return new File([blob], `${file.name.replace(/\.[^.]*$/, "") || "product"}.jpg`, { type: "image/jpeg" });
+    }
+    side = Math.round(Math.max(w, h) * 0.8);
+  }
+  throw new Error("That image is still too large after compressing — try a smaller file.");
+}
+
+/**
+ * `clientId` must be the id of the brand `clientSlug` names — the brand on the page,
+ * not the sidebar's selection. /api/upload files the image under that id's storage prefix.
+ */
+export function ClientProductsTable({ clientSlug, clientId }: { clientSlug: string; clientId: string | null }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [error, setError] = useState("");
+  const [convertProgress, setConvertProgress] = useState("");
 
   // Add
   const [showAdd, setShowAdd] = useState(false);
@@ -40,8 +101,12 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
   const load = useCallback(() => {
     setLoading(true);
     fetch(`/api/clients/${clientSlug}/products`)
-      .then((r) => r.json())
-      .then(setProducts)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await responseError(r, "Couldn't load products"));
+        const data = await r.json();
+        setProducts(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Couldn't load products"))
       .finally(() => setLoading(false));
   }, [clientSlug]);
 
@@ -63,13 +128,25 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
 
   const handleDelete = async () => {
     setDeleting(true);
+    setError("");
+    const deleted = new Set<string>();
+    const failures: string[] = [];
     try {
       for (const id of selected) {
-        await fetch(`/api/clients/${clientSlug}/products/${id}`, { method: "DELETE" });
+        const res = await fetch(`/api/clients/${clientSlug}/products/${id}`, { method: "DELETE" });
+        if (res.ok) deleted.add(id);
+        else {
+          const name = products.find((p) => p.id === id)?.productName ?? "a product";
+          failures.push(`${name}: ${await responseError(res, "delete failed")}`);
+        }
       }
-      setProducts((prev) => prev.filter((p) => !selected.has(p.id)));
-      setSelected(new Set());
+    } catch {
+      failures.push("Network error — some products may not have been deleted.");
     } finally {
+      // Only drop what the server actually deleted; failures stay listed and selected.
+      setProducts((prev) => prev.filter((p) => !deleted.has(p.id)));
+      setSelected((prev) => new Set([...prev].filter((id) => !deleted.has(id))));
+      if (failures.length) setError(`Couldn't delete ${failures.join("; ")}`);
       setDeleting(false);
       setConfirmDelete(false);
     }
@@ -79,13 +156,22 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
     e.preventDefault();
     if (!addName.trim()) return;
     setAdding(true);
+    setError("");
     try {
       const res = await fetch(`/api/clients/${clientSlug}/products`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productName: addName.trim() }),
       });
-      if (res.ok) { load(); setAddName(""); setShowAdd(false); }
+      if (!res.ok) {
+        setError(await responseError(res, "Couldn't add the product"));
+        return;
+      }
+      load();
+      setAddName("");
+      setShowAdd(false);
+    } catch {
+      setError("Couldn't add the product — check your connection and try again.");
     } finally {
       setAdding(false);
     }
@@ -96,39 +182,33 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
     setEditForm({ productName: p.productName, keyBenefits: p.keyBenefits || "", imageUrl: p.imageUrl || "", videoImageUrl: p.videoImageUrl || "" });
   };
 
-  const resizeImage = (file: File, maxW: number, maxH: number): Promise<Blob> =>
-    new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        let { width: w, height: h } = img;
-        if (w > maxW || h > maxH) { const r = Math.min(maxW / w, maxH / h); w = Math.round(w * r); h = Math.round(h * r); }
-        canvas.width = w; canvas.height = h;
-        canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
-        canvas.toBlob((b) => resolve(b!), "image/png", 0.95);
-      };
-      img.src = URL.createObjectURL(file);
-    });
-
   const handleImageUpload = async (file: File, field: "imageUrl" | "videoImageUrl") => {
-    if (!file.type.startsWith("image/")) return;
+    // Some OSes report HEIC and friends with an empty type; let the decoder decide.
+    if (file.type && !file.type.startsWith("image/")) {
+      setError(`${file.name} isn't an image.`);
+      return;
+    }
     const setUpState = field === "imageUrl" ? setUploading : setUploadingVideo;
     setUpState(true);
+    setError("");
     try {
-      let uploadFile: File | Blob = file;
-      if (file.size > 4 * 1024 * 1024) {
-        uploadFile = await resizeImage(file, field === "videoImageUrl" ? 1920 : 2048, field === "videoImageUrl" ? 1920 : 2048);
-      }
+      const uploadFile =
+        file.size > MAX_UPLOAD_BYTES || !UPLOADABLE_IMAGE_TYPES.includes(file.type)
+          ? await toUploadableJpeg(file, field === "videoImageUrl" ? 1920 : 2048)
+          : file;
       const formData = new FormData();
-      formData.append("file", uploadFile, file.name);
+      formData.append("file", uploadFile, uploadFile.name);
       formData.append("brandSlug", "dynamic-gift");
       formData.append("clientSlug", clientSlug || "");
       if (clientId) formData.append("clientId", clientId);
       formData.append("assetType", field === "videoImageUrl" ? "video-generation/products" : "products");
       const res = await fetch("/api/upload", { method: "POST", body: formData });
-      if (!res.ok) throw new Error("Upload failed");
-      const { url } = await res.json();
-      setEditForm((prev) => ({ ...prev, [field]: url }));
+      if (!res.ok) throw new Error(await responseError(res, "Upload failed"));
+      const data = await res.json().catch(() => null);
+      if (!data || typeof data.url !== "string" || !data.url) throw new Error("Upload finished but returned no image URL.");
+      setEditForm((prev) => ({ ...prev, [field]: data.url }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed.");
     } finally {
       setUpState(false);
     }
@@ -147,14 +227,34 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
 
   const saveEdit = async () => {
     if (!editingId) return;
+    const productName = (editForm.productName || "").trim();
+    if (!productName) {
+      setError("Product name can't be empty.");
+      return;
+    }
     setSaving(true);
+    setError("");
     try {
       const res = await fetch(`/api/clients/${clientSlug}/products/${editingId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editForm),
+        // Blank means "no image": send null, never "" — capability checks and the
+        // generators treat any non-null URL as an image.
+        body: JSON.stringify({
+          productName,
+          keyBenefits: editForm.keyBenefits?.trim() || null,
+          imageUrl: editForm.imageUrl || null,
+          videoImageUrl: editForm.videoImageUrl || null,
+        }),
       });
-      if (res.ok) { load(); setEditingId(null); }
+      if (!res.ok) {
+        setError(await responseError(res, "Couldn't save the product"));
+        return;
+      }
+      load();
+      setEditingId(null);
+    } catch {
+      setError("Couldn't save the product — check your connection and try again.");
     } finally {
       setSaving(false);
     }
@@ -166,15 +266,39 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
     const eligible = products.filter((p) => p.imageUrl && !p.videoImageUrl);
     if (eligible.length === 0) return;
     setConverting(true);
+    setError("");
+    let pending = eligible.map((p) => p.id);
+    let converted = 0;
+    const failures: string[] = [];
     try {
-      const res = await fetch(`/api/clients/${clientSlug}/products/convert-video-image`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productIds: eligible.map((p) => p.id) }),
-      });
-      if (res.ok) load();
+      // The route converts a bounded batch per call and hands back the rest.
+      while (pending.length > 0) {
+        setConvertProgress(`${converted}/${eligible.length}`);
+        const res = await fetch(`/api/clients/${clientSlug}/products/convert-video-image`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ productIds: pending }),
+        });
+        if (!res.ok) {
+          failures.push(await responseError(res, "Conversion failed"));
+          break;
+        }
+        const data = await res.json();
+        converted += Number(data.converted) || 0;
+        for (const r of Array.isArray(data.results) ? data.results : []) {
+          if (r.status === "error") failures.push(`${r.name}: ${r.error}`);
+        }
+        const remaining: string[] = Array.isArray(data.remaining) ? data.remaining : [];
+        if (remaining.length >= pending.length) break; // no progress — don't loop forever
+        pending = remaining;
+      }
+    } catch {
+      failures.push("Network error during conversion.");
     } finally {
+      if (failures.length) setError(`Converted ${converted} of ${eligible.length}. ${failures.join("; ")}`);
+      setConvertProgress("");
       setConverting(false);
+      load();
     }
   };
 
@@ -206,7 +330,7 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
             {eligibleForConvert > 0 && (
               <Button size="sm" variant="outline" onClick={handleConvertAll} disabled={converting}>
                 {converting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Video className="mr-1.5 h-3.5 w-3.5" />}
-                {converting ? "Converting..." : `Convert ${eligibleForConvert} to 9:16`}
+                {converting ? `Converting${convertProgress ? ` ${convertProgress}` : ""}...` : `Convert ${eligibleForConvert} to 9:16`}
               </Button>
             )}
             <Button size="sm" variant="outline" onClick={() => setShowAdd(!showAdd)}>
@@ -215,6 +339,15 @@ export function ClientProductsTable({ clientSlug }: { clientSlug: string }) {
           </div>
         )}
       </CardHeader>
+
+      {error && (
+        <div className="mx-6 mb-4 flex items-start justify-between gap-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
+          <span>{error}</span>
+          <button type="button" onClick={() => setError("")} className="shrink-0" aria-label="Dismiss">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {!collapsed && (
         <CardContent>

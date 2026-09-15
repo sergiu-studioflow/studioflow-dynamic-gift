@@ -2,6 +2,7 @@ import { db, schema } from "@/lib/db";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { eq, and, asc, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { isProcessingStale, processingStartedAt } from "./processing";
 
 export const dynamic = "force-dynamic";
 
@@ -40,10 +41,14 @@ export async function GET(request: NextRequest) {
     .groupBy(schema.organicPosts.profileRef);
 
   const countMap = new Map(postCounts.map((r) => [r.profileRef, r.count]));
+  // Processing for too long means the scraper died — the UI offers a retry.
+  const startedAt = await processingStartedAt(profiles);
+  const now = Date.now();
 
   const result = profiles.map((p) => ({
     ...p,
     postCount: countMap.get(p.id) || 0,
+    processingStale: p.trackingStatus === "Processing" && isProcessingStale(startedAt.get(p.id), now),
   }));
 
   return NextResponse.json(result);

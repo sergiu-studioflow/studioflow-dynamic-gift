@@ -3,6 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { eq, asc } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { isShippable, QC_HELD } from "@/lib/qc/gate";
+import { deleteTextReviewsForRequest } from "@/lib/qc/enqueue";
 
 const isHeld = (s?: string | null) => QC_HELD.includes(s ?? "skipped");
 
@@ -74,6 +75,9 @@ export async function DELETE(
     return NextResponse.json({ error: "Request not found" }, { status: 404 });
   }
 
+  // The ideas go with the request (FK cascade); their QC reviews have no FK, so remove them
+  // first or they linger in the Quality Control queue.
+  await deleteTextReviewsForRequest("ideation", id);
   await db
     .delete(schema.ideationRequests)
     .where(eq(schema.ideationRequests.id, id));

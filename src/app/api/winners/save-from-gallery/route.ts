@@ -43,6 +43,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Generation is not completed or has no image" }, { status: 400 });
   }
 
+  // Refined-chain artifacts are exempt from QC (so they read as shippable) but are not ads.
+  if (generation.mode === "intermediate" || generation.mode === "logo-refined") {
+    return NextResponse.json({ error: "Only final ads can be saved as winners" }, { status: 400 });
+  }
+
   // Hard gate: a held creative must never become a "winner" — winners feed the reference
   // library, the winner profile, and future generations.
   if (!isShippable(generation.qcStatus)) {

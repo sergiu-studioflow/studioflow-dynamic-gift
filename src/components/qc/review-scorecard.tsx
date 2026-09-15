@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, ShieldCheck, ShieldAlert, ShieldQuestion, RotateCcw, Check, X } from "lucide-react";
+import { Loader2, ShieldCheck, ShieldAlert, ShieldQuestion, RotateCcw, Check, X, Archive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useClient } from "@/lib/client-context";
@@ -23,6 +23,11 @@ export type GateReview = {
   sourceId: string | null;
   assetPath: string | null;
   assetUrl?: string | null;
+  copyText?: string | null;
+  /** Text lane: the idea / concept / brief under review (sent for reviews awaiting a decision). */
+  sourceText?: string | null;
+  /** Text lane: the generation request the piece belongs to, for linking back to it. */
+  requestId?: string | null;
   status: string;
   overallPass: boolean | null;
   criteriaJson: QcCriterion[] | null;
@@ -41,7 +46,9 @@ export type GateReview = {
  */
 export function useQcAutoGrade(active: boolean, onGraded: () => void) {
   const cb = useRef(onGraded);
-  cb.current = onGraded;
+  useEffect(() => {
+    cb.current = onGraded;
+  });
 
   useEffect(() => {
     if (!active) return;
@@ -77,9 +84,16 @@ export function QcBadge({ qcStatus, className }: { qcStatus?: string | null; cla
   );
 }
 
+/** Waiting on a human: flagged by the AI, rejected by a human but not yet dismissed, or a grade
+ *  that errored out ('failed'). A dismissed rejection is settled. Mirrors queue=held in /api/qc/reviews. */
+export function needsDecision(r: GateReview): boolean {
+  return r.status === "failed" || (r.status === "complete" && r.overallPass === false);
+}
+
 export function reviewVerdict(r: GateReview): { label: string; tone: string } {
   if (r.status === "pending" || r.status === "running") return { label: "Grading…", tone: "text-amber-600 dark:text-amber-400" };
-  if (r.status === "failed") return { label: "Error", tone: "text-rose-600 dark:text-rose-400" };
+  if (r.status === "failed") return { label: "Grading failed", tone: "text-rose-600 dark:text-rose-400" };
+  if (r.status === "dismissed") return { label: "Rejected (dismissed)", tone: "text-muted-foreground" };
   if (r.overallPass === true) return { label: r.overridden ? "Approved (human)" : "Passed", tone: "text-emerald-600 dark:text-emerald-400" };
   return { label: r.overridden ? "Rejected (human)" : "Flagged", tone: "text-rose-600 dark:text-rose-400" };
 }
@@ -99,6 +113,10 @@ export function ReviewScorecard({
   const [busy, setBusy] = useState(false);
   const verdict = reviewVerdict(review);
   const criteria = review.criteriaJson ?? [];
+  const failed = review.status === "failed";
+  const humanRejected = review.status === "complete" && review.overridden && review.overallPass === false;
+  // A failed grade needs the same way out as a flag: a human verdict, or a fresh grade.
+  const decidable = review.status === "complete" || failed || review.status === "dismissed";
 
   async function act(body: Record<string, unknown>) {
     setBusy(true);
@@ -113,6 +131,8 @@ export function ReviewScorecard({
         alert(d.error || "Failed to update the review");
       }
       onChange();
+    } catch {
+      alert("Network error — the review was not updated.");
     } finally {
       setBusy(false);
     }
@@ -150,20 +170,33 @@ export function ReviewScorecard({
 
       {review.notes ? <p className="text-muted-foreground">{review.notes}</p> : null}
 
-      {canEdit && review.status === "complete" ? (
+      {canEdit && decidable ? (
         <div className="flex flex-wrap gap-1.5 pt-1">
-          {review.overallPass !== true ? (
+          {review.overallPass !== true || review.status !== "complete" ? (
             <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => act({ overallPass: true })}>
               <Check className="mr-1 h-3 w-3" /> Approve
             </Button>
           ) : null}
-          {review.overallPass !== false ? (
+          {/* An AI flag can be confirmed as a rejection (then dismissed); a human rejection can't be re-rejected. */}
+          {review.status !== "dismissed" && !humanRejected ? (
             <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => act({ overallPass: false })}>
               <X className="mr-1 h-3 w-3" /> Reject
             </Button>
           ) : null}
+          {humanRejected ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              disabled={busy}
+              title="Clear it from the queue. The piece stays rejected."
+              onClick={() => act({ action: "dismiss" })}
+            >
+              <Archive className="mr-1 h-3 w-3" /> Dismiss
+            </Button>
+          ) : null}
           <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy} onClick={() => act({ action: "regenerate" })}>
-            <RotateCcw className="mr-1 h-3 w-3" /> Re-grade
+            <RotateCcw className="mr-1 h-3 w-3" /> {failed ? "Dismiss & re-grade" : "Re-grade"}
           </Button>
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
         </div>
@@ -178,13 +211,18 @@ export function QcReviewPanel({ reviewId }: { reviewId: string }) {
   const [review, setReview] = useState<GateReview | null>(null);
   const [canEdit, setCanEdit] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(() => {
     if (!clientId) return;
-    const res = await fetch(`/api/qc/reviews/${reviewId}?clientId=${clientId}`);
-    if (!res.ok) return;
-    const data = await res.json();
-    setReview(data.review);
-    setCanEdit(!!data.canEdit);
+    fetch(`/api/qc/reviews/${reviewId}?clientId=${clientId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return;
+        setReview(data.review);
+        setCanEdit(!!data.canEdit);
+      })
+      .catch(() => {
+        /* keep the last report; the next poll or reopen retries */
+      });
   }, [reviewId, clientId]);
 
   useEffect(() => {

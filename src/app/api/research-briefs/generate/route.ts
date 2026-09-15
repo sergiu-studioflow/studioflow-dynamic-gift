@@ -2,15 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { getAppConfig } from "@/lib/config";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc, gt } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
+
+/** A brief still "generating" after this long never got its callback — don't reuse it. */
+const IN_FLIGHT_REUSE_MS = 30 * 60 * 1000;
 
 /**
  * POST /api/research-briefs/generate
  * Async fire-and-forget brief generation from competitor ad or organic post.
  * Body: { sourceType, sourceId, clientId }
- * Returns 202 immediately. n8n calls /api/research-briefs/callback when done.
+ * Returns 202 { briefId, status } immediately; n8n calls /api/research-briefs/callback
+ * when done. If a brief for the same source is already generating, returns that
+ * one ({ briefId, status, existing: true }) instead of paying for a duplicate.
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -20,10 +25,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Viewers cannot generate briefs" }, { status: 403 });
   }
 
-  const body = await req.json();
-  const { sourceType, sourceId, clientId } = body;
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  const { sourceType, clientId } = body;
+  const sourceId = Number(body.sourceId);
 
-  if (!sourceType || !sourceId || !clientId) {
+  if (!sourceType || !body.sourceId || !clientId || !Number.isInteger(sourceId)) {
     return NextResponse.json({ error: "sourceType, sourceId, and clientId are required" }, { status: 400 });
   }
 
@@ -67,6 +76,26 @@ export async function POST(req: NextRequest) {
     mediaType = ct.includes("video") ? "video" : ct.includes("carousel") ? "carousel" : "static";
   }
 
+  // Already generating for this ad/post (double click, second tab, reopened modal)?
+  // Hand back that brief rather than triggering another paid generation.
+  const [inFlight] = await db
+    .select({ id: schema.researchBriefs.id })
+    .from(schema.researchBriefs)
+    .where(
+      and(
+        eq(schema.researchBriefs.clientId, clientId),
+        eq(schema.researchBriefs.sourceType, sourceType),
+        eq(schema.researchBriefs.sourceId, sourceId),
+        eq(schema.researchBriefs.status, "generating"),
+        gt(schema.researchBriefs.createdAt, new Date(Date.now() - IN_FLIGHT_REUSE_MS))
+      )
+    )
+    .orderBy(desc(schema.researchBriefs.createdAt))
+    .limit(1);
+  if (inFlight) {
+    return NextResponse.json({ briefId: inFlight.id, status: "generating", existing: true });
+  }
+
   // Fetch brand intelligence for this specific client
   const brandIntelSections = await db
     .select()
@@ -77,6 +106,13 @@ export async function POST(req: NextRequest) {
   const brandIntelligence = brandIntelSections.length > 0
     ? brandIntelSections.map((s) => `## ${s.title}\n\n${s.content || ""}`).join("\n\n")
     : null;
+
+  // Sent so the generator can write as the selected brand rather than a fixed identity.
+  const [brand] = await db
+    .select({ name: schema.brands.brandName })
+    .from(schema.brands)
+    .where(eq(schema.brands.id, clientId))
+    .limit(1);
 
   // Insert brief row with "generating" status
   const [briefRow] = await db
@@ -121,6 +157,7 @@ export async function POST(req: NextRequest) {
         sourceType,
         sourceData,
         brandIntelligence,
+        brandName: brand?.name ?? null,
         mediaType,
         clientId,
       }),
@@ -131,14 +168,18 @@ export async function POST(req: NextRequest) {
         .update(schema.researchBriefs)
         .set({ status: "error", errorMessage: `n8n returned ${res.status}`, updatedAt: new Date() })
         .where(eq(schema.researchBriefs.id, briefRow.id));
-      return NextResponse.json({ error: "Failed to trigger brief generation", briefId: briefRow.id }, { status: 502 });
+      return NextResponse.json(
+        { error: `Failed to trigger brief generation (the brief generator returned HTTP ${res.status})`, briefId: briefRow.id },
+        { status: 502 }
+      );
     }
   } catch (err) {
+    const reason = err instanceof Error ? err.message : "network error";
     await db
       .update(schema.researchBriefs)
-      .set({ status: "error", errorMessage: "Failed to reach n8n webhook", updatedAt: new Date() })
+      .set({ status: "error", errorMessage: `Failed to reach n8n webhook: ${reason}`, updatedAt: new Date() })
       .where(eq(schema.researchBriefs.id, briefRow.id));
-    return NextResponse.json({ error: "Failed to reach brief generator", briefId: briefRow.id }, { status: 502 });
+    return NextResponse.json({ error: `Failed to reach the brief generator: ${reason}`, briefId: briefRow.id }, { status: 502 });
   }
 
   return NextResponse.json({ briefId: briefRow.id, status: "generating" }, { status: 202 });

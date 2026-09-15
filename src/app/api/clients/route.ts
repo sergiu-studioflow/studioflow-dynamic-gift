@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
-import { desc, eq, sql } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { provisionClient } from "@/lib/client-provisioning";
 import { slugify } from "@/lib/utils";
+import { toClient, type Client } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/clients — List all clients
+ *
+ * Ordered by sortOrder then name: the client switcher selects the first brand by
+ * default, so newest-first made whichever brand was added last the default everywhere.
  */
 export async function GET() {
   const auth = await requireAuth();
@@ -17,9 +21,9 @@ export async function GET() {
   const rows = await db
     .select()
     .from(schema.clients)
-    .orderBy(desc(schema.clients.createdAt));
+    .orderBy(asc(schema.clients.sortOrder), asc(schema.clients.brandName));
 
-  return NextResponse.json(rows);
+  return NextResponse.json<Client[]>(rows.map(toClient));
 }
 
 /**
@@ -42,6 +46,9 @@ export async function POST(req: NextRequest) {
   }
 
   const clientSlug = slugify(clientName);
+  if (!clientSlug) {
+    return NextResponse.json({ error: "clientName must contain letters or numbers" }, { status: 400 });
+  }
 
   // Check slug uniqueness
   const [existing] = await db
@@ -59,7 +66,7 @@ export async function POST(req: NextRequest) {
       { clientName: clientName.trim(), clientSlug, website, category, primaryMarket, currency, cluster, logoUrl, brandColor, monthlyAdSpend, notes },
       auth.portalUser.id
     );
-    return NextResponse.json(client, { status: 201 });
+    return NextResponse.json<Client>(client, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to create client";
     console.error("[api/clients] POST error:", message, err);

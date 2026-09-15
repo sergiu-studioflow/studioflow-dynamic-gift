@@ -49,11 +49,15 @@ export async function getPresignedUploadUrl(
 
 export async function getPresignedDownloadUrl(
   key: string,
-  expiresIn = 600
+  expiresIn = 600,
+  opts: { attachmentFilename?: string } = {}
 ): Promise<string> {
+  const filename = opts.attachmentFilename?.replace(/["\\\r\n]/g, "_");
   const command = new GetObjectCommand({
     Bucket: R2_BUCKET_NAME,
     Key: key,
+    // Makes the browser save the file instead of rendering it.
+    ...(filename ? { ResponseContentDisposition: `attachment; filename="${filename}"` } : {}),
   });
   return getSignedUrl(r2, command, { expiresIn });
 }
@@ -94,10 +98,59 @@ export function toExternalUrl(url: string): string {
 
 export function r2KeyFromUrl(url: string): string | null {
   for (const prefix of R2_PUBLIC_URLS) {
-    if (url.startsWith(prefix)) {
-      return url.slice(prefix.length + 1);
+    // The host must end exactly where the path begins — a bare startsWith would also
+    // accept a look-alike host such as `….r2.dev.evil.example`.
+    if (url.startsWith(`${prefix}/`)) {
+      return url.slice(prefix.length + 1) || null;
     }
   }
+  return null;
+}
+
+/**
+ * The object key behind `url` only when it sits inside `storagePrefix/` — the owning
+ * brand's folder. `studioflow-assets` is shared by every StudioFlow brand, so every
+ * delete goes through this: another brand's file, `shared/`, or a URL that isn't ours
+ * returns null and storage is left alone.
+ */
+export function ownedR2Key(
+  url: string | null | undefined,
+  storagePrefix: string | null | undefined
+): string | null {
+  const prefix = (storagePrefix ?? "").replace(/\/+$/, "");
+  if (!url || !prefix) return null;
+  const key = r2KeyFromUrl(url)?.split(/[?#]/)[0];
+  if (!key || !key.startsWith(`${prefix}/`)) return null;
+  const segments = key.split("/");
+  if (segments.includes("..") || segments.includes(".")) return null;
+  return key;
+}
+
+/**
+ * Object key for any URL form the app hands out: a public URL (see r2KeyFromUrl) or a
+ * presigned S3-endpoint URL, virtual-hosted (<bucket>.<account>.r2.cloudflarestorage.com/<key>)
+ * or path-style (<account>.r2.cloudflarestorage.com/<bucket>/<key>). Null otherwise.
+ */
+export function r2KeyFromStorageUrl(url: string): string | null {
+  const publicKey = r2KeyFromUrl(url);
+  if (publicKey) return publicKey.split("?")[0] || null;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!parsed.hostname.endsWith(".r2.cloudflarestorage.com")) return null;
+
+  let path: string;
+  try {
+    path = decodeURIComponent(parsed.pathname).replace(/^\/+/, "");
+  } catch {
+    return null;
+  }
+  if (parsed.hostname.startsWith(`${R2_BUCKET_NAME}.`)) return path || null;
+  if (path.startsWith(`${R2_BUCKET_NAME}/`)) return path.slice(R2_BUCKET_NAME.length + 1) || null;
   return null;
 }
 

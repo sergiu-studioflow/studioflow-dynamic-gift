@@ -29,8 +29,15 @@ export { fetchAsset };
  * So: once a provider has been seen configured in this process, a later empty read is
  * treated as TRANSIENT (thrown, so the pipeline requeues and retries) rather than as an
  * absence. Only a provider never seen configured reports as genuinely unavailable.
+ *
+ * That benefit of the doubt is bounded. A vault blip lasts seconds; a key that has read empty
+ * for MISSING_KEY_GRACE_MS was really removed. Past that point the provider reports as
+ * unconfigured, so grades fall back to the other judge or record "no judge is configured" —
+ * instead of every review requeueing for as long as the process stays warm.
  */
 const everSeen = { gemini: false, claude: false };
+const MISSING_KEY_GRACE_MS = 3 * 60_000;
+const missingSince: { gemini: number | null; claude: number | null } = { gemini: null, claude: null };
 
 class TransientConfigError extends Error {
   status = 503; // isTransient() treats >=500 as retryable
@@ -44,9 +51,19 @@ async function isConfigured(provider: "gemini" | "claude"): Promise<boolean> {
   const configured = provider === "gemini" ? await geminiConfigured() : await claudeConfigured();
   if (configured) {
     everSeen[provider] = true;
+    missingSince[provider] = null;
     return true;
   }
-  if (everSeen[provider]) throw new TransientConfigError(provider);
+  if (!everSeen[provider]) return false;
+
+  const now = Date.now();
+  const since = missingSince[provider] ?? now;
+  missingSince[provider] = since;
+  if (now - since < MISSING_KEY_GRACE_MS) throw new TransientConfigError(provider);
+
+  // Empty for longer than any vault blip: the key was removed, not momentarily unreadable.
+  everSeen[provider] = false;
+  missingSince[provider] = null;
   return false;
 }
 
@@ -66,8 +83,14 @@ export type ProviderStatus = { gemini: boolean; claude: boolean; videoGradable: 
 export async function providerStatus(): Promise<ProviderStatus> {
   // Display-only probe for the dashboard banner — plain reads, never throws.
   const [gemini, claude] = await Promise.all([geminiConfigured(), claudeConfigured()]);
-  if (gemini) everSeen.gemini = true;
-  if (claude) everSeen.claude = true;
+  if (gemini) {
+    everSeen.gemini = true;
+    missingSince.gemini = null;
+  }
+  if (claude) {
+    everSeen.claude = true;
+    missingSince.claude = null;
+  }
   return { gemini, claude, videoGradable: gemini, anyGradable: gemini || claude };
 }
 

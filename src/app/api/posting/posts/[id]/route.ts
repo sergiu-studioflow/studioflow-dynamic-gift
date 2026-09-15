@@ -4,7 +4,6 @@ import { db, schema } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
 import { clampHashtags, isPlatformKey } from "@/lib/posting/platforms";
 import { generateOrganicCaptions } from "@/lib/posting/captions";
-import { getApiKey } from "@/lib/api-keys";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -16,10 +15,23 @@ async function loadPost(id: string) {
   return { post, targets };
 }
 
-/** True once any target has been claimed for publishing (edits/schedule locked). */
-function anyTargetClaimed(targets: (typeof schema.postTargets.$inferSelect)[]): boolean {
-  return targets.some((t) => t.status === "publishing" || t.status === "published" || t.claimedAt !== null);
+type TargetRow = typeof schema.postTargets.$inferSelect;
+
+/**
+ * Why this post can no longer be unscheduled / cancelled / deleted, or null. A platform
+ * that is publishing, published, or whose publish outcome is unknown has to be resolved first.
+ */
+function targetsLockReason(targets: TargetRow[]): string | null {
+  if (targets.some((t) => t.status === "publishing")) return "A platform is publishing right now — try again in a few minutes.";
+  if (targets.some((t) => t.status === "published")) return "Already published to at least one platform.";
+  if (targets.some((t) => t.errorCode === "ambiguous_stuck")) {
+    return "A platform's publish outcome is unknown — check it, then Retry or Mark published first.";
+  }
+  return null;
 }
+
+/** A queue entry still 'generating' after this long lost its request (the queue route's maxDuration is 120 s). */
+const STALE_GENERATING_MS = 5 * 60_000;
 
 /**
  * PATCH /api/posting/posts/[id]
@@ -103,9 +115,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   // -- Unschedule (scheduled → draft) ----------------------------------------
   if (action === "unschedule") {
-    if (post.status !== "scheduled" || anyTargetClaimed(targets)) {
+    if (post.status !== "scheduled") {
       return NextResponse.json({ error: "Can only unschedule a scheduled post before it starts publishing." }, { status: 409 });
     }
+    const lock = targetsLockReason(targets);
+    if (lock) return NextResponse.json({ error: lock }, { status: 409 });
     const [updated] = await db
       .update(schema.scheduledPosts)
       .set({ status: "draft", scheduledAt: null, approvedBy: null, approvedAt: null, updatedAt: new Date() })
@@ -115,10 +129,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   // -- Cancel ----------------------------------------------------------------
+  // Also allowed while 'publishing' if nothing went out yet (e.g. a platform waiting on a retry).
   if (action === "cancel") {
-    if (!["draft", "scheduled"].includes(post.status) || anyTargetClaimed(targets)) {
+    if (!["draft", "scheduled", "publishing"].includes(post.status)) {
       return NextResponse.json({ error: "Can only cancel a draft/scheduled post before publishing starts." }, { status: 409 });
     }
+    const lock = targetsLockReason(targets);
+    if (lock) return NextResponse.json({ error: lock }, { status: 409 });
     const [updated] = await db
       .update(schema.scheduledPosts)
       .set({ status: "cancelled", updatedAt: new Date() })
@@ -136,7 +153,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     await db
       .update(schema.postTargets)
-      .set({ status: "pending", attemptCount: 0, claimedAt: null, nextAttemptAt: null, igContainerId: null, igPublishStartedAt: null, errorCode: null, errorMessage: null, updatedAt: new Date() })
+      // igContainerId is kept on purpose: the publisher checks that container first, so an
+      // Instagram post that did go live is recorded instead of posted a second time.
+      .set({ status: "pending", attemptCount: 0, claimedAt: null, nextAttemptAt: null, igPublishStartedAt: null, errorCode: null, errorMessage: null, updatedAt: new Date() })
       .where(eq(schema.postTargets.id, target.id));
     // Reopen the parent so the publisher will pick it up.
     if (["failed", "partial"].includes(post.status)) {
@@ -192,8 +211,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return NextResponse.json({ error: "Unknown or missing action" }, { status: 400 });
 }
 
-/** DELETE — hard-remove a draft/cancelled post. */
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+/** DELETE — hard-remove a draft / cancelled / failed post, or a queue entry stuck generating. */
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
   if (auth.portalUser.role === "viewer") {
@@ -202,9 +221,13 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const { id } = await params;
   const loaded = await loadPost(id);
   if (!loaded) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (!["draft", "cancelled", "failed"].includes(loaded.post.status) || anyTargetClaimed(loaded.targets)) {
+  const staleGenerating =
+    loaded.post.status === "generating" && loaded.post.createdAt.getTime() < Date.now() - STALE_GENERATING_MS;
+  if (!["draft", "cancelled", "failed"].includes(loaded.post.status) && !staleGenerating) {
     return NextResponse.json({ error: "Only draft / cancelled / failed posts can be deleted." }, { status: 409 });
   }
+  const lock = targetsLockReason(loaded.targets);
+  if (lock) return NextResponse.json({ error: lock }, { status: 409 });
   await db.delete(schema.scheduledPosts).where(eq(schema.scheduledPosts.id, id));
   return NextResponse.json({ ok: true });
 }

@@ -31,6 +31,13 @@ export function qcShippable(qcStatus?: string | null): boolean {
   return ["approved", "skipped"].includes(qcStatus ?? "skipped");
 }
 
+/** Why Download / Winner are unavailable for a completed ad that isn't shippable yet. */
+export function qcHoldReason(qcStatus?: string | null): string {
+  if (qcStatus === "pending") return "Awaiting QC — download & winner unlock when it passes";
+  if (qcStatus === "rejected") return "Rejected by QC";
+  return "Held by QC — review it in the QC queue";
+}
+
 type AdCardProps = {
   generation: StaticAdGeneration;
   onClick: () => void;

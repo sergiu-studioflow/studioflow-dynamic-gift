@@ -46,6 +46,11 @@ const FIELDS = [
   },
 ];
 
+/**
+ * One client's ruleset. Render it with key={clientId}: the form is bound to the client it was
+ * loaded for, and a remount is what guarantees brand B's form never holds brand A's rules
+ * (a Save would write them to B).
+ */
 export function RulesTab({
   clientId,
   clientName,
@@ -60,15 +65,19 @@ export function RulesTab({
   const [notes, setNotes] = useState("");
   const [winnerProfile, setWinnerProfile] = useState("");
   const [loading, setLoading] = useState(true);
+  // Saving replaces the whole ruleset, so it stays off until this client's rules have loaded —
+  // otherwise a failed load would let Save wipe them with an empty form.
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!clientId) return;
-    setLoading(true);
-    const res = await fetch(`/api/qc/config?clientId=${clientId}`);
-    if (res.ok) {
+    try {
+      const res = await fetch(`/api/qc/config?clientId=${encodeURIComponent(clientId)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const cfg: Config | null = data.config;
       setConfig(cfg);
@@ -80,8 +89,13 @@ export function RulesTab({
       });
       setNotes(cfg?.brandSafetyNotes ?? "");
       setWinnerProfile(cfg?.winnerProfile ?? "");
+      setLoaded(true);
+      setLoadError(null);
+    } catch {
+      setLoadError("Couldn't load this client's rules.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [clientId]);
 
   useEffect(() => {
@@ -89,29 +103,34 @@ export function RulesTab({
   }, [load]);
 
   async function save() {
-    if (!clientId) return;
+    if (!clientId || !loaded) return;
     setSaving(true);
     setMessage(null);
-    const res = await fetch("/api/qc/config", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        clientId,
-        bannedPhrasings: linesToArr(form.bannedPhrasings ?? ""),
-        visualRules: linesToArr(form.visualRules ?? ""),
-        paletteHexes: linesToArr(form.paletteHexes ?? ""),
-        productFacts: linesToArr(form.productFacts ?? ""),
-        brandSafetyNotes: notes,
-        winnerProfile,
-      }),
-    });
-    setSaving(false);
-    if (res.ok) {
-      setMessage("Saved — future grades use the new rules.");
-      load();
-    } else {
-      const d = await res.json().catch(() => ({}));
-      setMessage(d.error || "Save failed");
+    try {
+      const res = await fetch("/api/qc/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId,
+          bannedPhrasings: linesToArr(form.bannedPhrasings ?? ""),
+          visualRules: linesToArr(form.visualRules ?? ""),
+          paletteHexes: linesToArr(form.paletteHexes ?? ""),
+          productFacts: linesToArr(form.productFacts ?? ""),
+          brandSafetyNotes: notes,
+          winnerProfile,
+        }),
+      });
+      if (res.ok) {
+        setMessage("Saved — future grades use the new rules.");
+        load();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setMessage(d.error || "Save failed");
+      }
+    } catch {
+      setMessage("Network error — the ruleset was not saved.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -119,23 +138,28 @@ export function RulesTab({
     if (!clientId) return;
     setRegenerating(true);
     setMessage(null);
-    const res = await fetch("/api/qc/winner-profile", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId }),
-    });
-    const data = await res.json().catch(() => ({}));
-    setRegenerating(false);
-    if (res.ok) {
-      setWinnerProfile(data.profile ?? "");
-      setMessage(
-        data.profile
-          ? `Rebuilt from ${data.sourceCount} winner${data.sourceCount === 1 ? "" : "s"}.`
-          : data.reason || "No profile could be built."
-      );
-      load();
-    } else {
-      setMessage(data.error || "Failed to rebuild the profile");
+    try {
+      const res = await fetch("/api/qc/winner-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setWinnerProfile(data.profile ?? "");
+        setMessage(
+          data.profile
+            ? `Rebuilt from ${data.sourceCount} winner${data.sourceCount === 1 ? "" : "s"}.`
+            : data.reason || "No profile could be built."
+        );
+        load();
+      } else {
+        setMessage(data.error || "Failed to rebuild the profile");
+      }
+    } catch {
+      setMessage("Network error — the profile was not rebuilt.");
+    } finally {
+      setRegenerating(false);
     }
   }
 
@@ -144,6 +168,23 @@ export function RulesTab({
   }
   if (loading) {
     return <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />;
+  }
+  if (!loaded) {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-destructive">{loadError ?? "Couldn't load this client's rules."}</p>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setLoading(true);
+            load();
+          }}
+        >
+          Try again
+        </Button>
+      </div>
+    );
   }
 
   return (

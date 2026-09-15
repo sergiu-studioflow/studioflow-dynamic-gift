@@ -37,7 +37,8 @@ export function NewPlanForm({ onCreated, onCancel }: { onCreated: (id: string) =
   function toggle(id: string) {
     setSelected((prev) => {
       const n = new Set(prev);
-      n.has(id) ? n.delete(id) : n.add(id);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
       return n;
     });
   }
@@ -67,12 +68,16 @@ export function NewPlanForm({ onCreated, onCancel }: { onCreated: (id: string) =
           },
         }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Failed to create plan");
+      // A gateway error page isn't JSON — don't let the parse throw past the message.
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.id) {
+        setError(data.error || `Failed to create plan (${res.status}) — please try again.`);
         return;
       }
+      // Planning continues in the background; the plan view refreshes until it's ready.
       onCreated(data.id);
+    } catch {
+      setError("Couldn't reach the server — check your connection and try again.");
     } finally {
       setSubmitting(false);
     }
@@ -138,7 +143,7 @@ export function NewPlanForm({ onCreated, onCancel }: { onCreated: (id: string) =
         <Button variant="outline" size="sm" onClick={onCancel} disabled={submitting}>Cancel</Button>
         <Button size="sm" onClick={submit} disabled={submitting || selected.size === 0}>
           {submitting ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Sparkles className="mr-1 h-3.5 w-3.5" />}
-          {submitting ? "Planning the month…" : "Generate plan"}
+          {submitting ? "Starting…" : "Generate plan"}
         </Button>
       </div>
     </div>

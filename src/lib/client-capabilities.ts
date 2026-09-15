@@ -18,7 +18,7 @@
  * independently, so this changes discoverability, not access control.
  */
 
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 
 export type ClientCapabilities = {
@@ -42,7 +42,7 @@ export const DEFAULT_CAPABILITIES: ClientCapabilities = {
   reviews: false,
   posting: true,
   monthlyPlanning: false,
-  qualityControl: false,
+  qualityControl: true,
   reasons: {},
 };
 
@@ -59,10 +59,16 @@ export async function capabilitiesForClient(clientId: string): Promise<ClientCap
   const n = sql<number>`count(*)::int`;
   const [[cfg], [withImage], [products], [chars], [competitors]] = await Promise.all([
     db.select({ n }).from(schema.clientStaticAdConfig).where(eq(schema.clientStaticAdConfig.clientId, clientId)),
+    // A cleared image field can hold "" rather than NULL — that is no image.
     db
       .select({ n })
       .from(schema.clientProducts)
-      .where(and(eq(schema.clientProducts.clientId, clientId), isNotNull(schema.clientProducts.imageUrl))),
+      .where(
+        and(
+          eq(schema.clientProducts.clientId, clientId),
+          sql`nullif(btrim(${schema.clientProducts.imageUrl}), '') is not null`
+        )
+      ),
     db.select({ n }).from(schema.clientProducts).where(eq(schema.clientProducts.clientId, clientId)),
     db.select({ n }).from(schema.characters).where(eq(schema.characters.clientId, clientId)),
     db.select({ n }).from(schema.clientCompetitors).where(eq(schema.clientCompetitors.clientId, clientId)),
@@ -102,12 +108,14 @@ export async function capabilitiesForClient(clientId: string): Promise<ClientCap
       : "No Google Maps URL on the brand record.";
   }
 
-  // Monthly Planning schedules output from the generative systems, and Quality
-  // Control grades it — neither is meaningful with both of those off.
+  // Monthly Planning schedules output from the static-ad and video systems — not
+  // meaningful with both of those off.
   const monthlyPlanning = staticAds || video;
   if (!monthlyPlanning) reasons.monthlyPlanning = "No generative system is set up for this brand yet.";
-  const qualityControl = monthlyPlanning;
-  if (!qualityControl) reasons.qualityControl = reasons.monthlyPlanning;
+
+  // Quality Control is never gated: it also grades the text systems (video briefs,
+  // content ideas, ad copy), which every brand can run from day one.
+  const qualityControl = true;
 
   return {
     staticAds,

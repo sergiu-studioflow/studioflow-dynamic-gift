@@ -1,88 +1,89 @@
 import { db, schema } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { enqueueTextBatch } from "@/lib/qc/enqueue";
-import { resolveTextClientId } from "@/lib/qc/grade";
+import { renderValue, resolveTextClientId } from "@/lib/qc/grade";
+import { callbackStatusUpdate, hasValidWebhookSecret, parseCompletionCallback } from "../_lib/text-callback";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
+/**
+ * POST /api/webhook/ad-copy-complete   x-webhook-secret header, body { requestId, status }
+ *
+ * The n8n workflow has already saved the concepts and set the request's status; this reads
+ * back what it wrote and queues it for Quality Control. Safe to redeliver: only concepts not
+ * yet queued are enqueued, and nothing is inserted here.
+ */
 export async function POST(request: NextRequest) {
-  // Validate webhook secret
-  const secret = request.headers.get("x-webhook-secret");
-  if (process.env.WEBHOOK_SECRET && secret !== process.env.WEBHOOK_SECRET) {
+  if (!hasValidWebhookSecret(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
-  const { requestId, concepts, error: errorMsg } = body;
+  const callback = await parseCompletionCallback(request);
+  if ("error" in callback) return NextResponse.json({ error: callback.error }, { status: 400 });
+  const { requestId } = callback;
 
-  if (!requestId) {
-    return NextResponse.json({ error: "requestId required" }, { status: 400 });
-  }
+  const [req] = await db
+    .select({ brand: schema.adCopyRequests.brand, status: schema.adCopyRequests.status })
+    .from(schema.adCopyRequests)
+    .where(eq(schema.adCopyRequests.id, requestId))
+    .limit(1);
+  if (!req) return NextResponse.json({ error: "Request not found" }, { status: 404 });
 
-  if (errorMsg) {
+  // Quality Control gate — one review per concept not yet queued. Text rows carry no
+  // client_id, so the client is resolved from the request's brand name.
+  const toQueue = await db
+    .select({
+      id: schema.generatedAdCopy.id,
+      primaryTextMedium: schema.generatedAdCopy.primaryTextMedium,
+      headlines: schema.generatedAdCopy.headlines,
+      ctaRecommendation: schema.generatedAdCopy.ctaRecommendation,
+    })
+    .from(schema.generatedAdCopy)
+    .where(
+      and(
+        eq(schema.generatedAdCopy.requestId, requestId),
+        isNull(schema.generatedAdCopy.qcReviewId),
+        eq(schema.generatedAdCopy.qcStatus, "pending")
+      )
+    );
+  await enqueueTextBatch(
+    "ad_copy",
+    toQueue.map((c) => ({
+      id: c.id,
+      // headlines is jsonb [{text, char_count}] — rendered, not String()'d into "[object Object]".
+      copyText: [c.primaryTextMedium, renderValue(c.headlines), c.ctaRecommendation].filter(Boolean).join(" ") || null,
+    })),
+    await resolveTextClientId(req.brand)
+  );
+
+  const [{ saved }] = await db
+    .select({ saved: sql<number>`count(*)::int` })
+    .from(schema.generatedAdCopy)
+    .where(eq(schema.generatedAdCopy.requestId, requestId));
+
+  const update = callbackStatusUpdate({
+    current: req.status,
+    inFlightStatuses: ["new", "processing"],
+    callback,
+    saved,
+    noun: "concepts",
+  });
+  if (update) {
     await db
       .update(schema.adCopyRequests)
-      .set({ status: "error", errorMessage: errorMsg, updatedAt: new Date() })
+      .set({ ...update, updatedAt: new Date() })
       .where(eq(schema.adCopyRequests.id, requestId));
-
-    await db.insert(schema.activityLog).values({
-      action: "ad_copy_error",
-      resourceType: "ad_copy_request",
-      resourceId: requestId,
-      details: { error: errorMsg },
-    });
-
-    return NextResponse.json({ ok: true, status: "error" });
   }
-
-  // Insert concepts if provided
-  if (concepts && Array.isArray(concepts)) {
-    const inserted: Array<{ id: string; copyText: string | null }> = [];
-    for (let i = 0; i < concepts.length; i++) {
-      const c = concepts[i];
-      const [row] = await db.insert(schema.generatedAdCopy).values({
-        requestId,
-        conceptNumber: c.concept_number || i + 1,
-        conceptName: c.concept_name || null,
-        conceptStrategy: c.concept_strategy || null,
-        anglesUsed: c.angles_used || null,
-        primaryTextShort: c.primary_text_short || null,
-        primaryTextMedium: c.primary_text_medium || null,
-        primaryTextLong: c.primary_text_long || null,
-        headlines: c.headlines || null,
-        descriptions: c.descriptions || null,
-        hookLines: c.hook_lines || null,
-        ctaRecommendation: c.cta_recommendation || null,
-        abTestingNotes: c.ab_testing_notes || null,
-        complianceStatus: c.compliance_status || "passed",
-        complianceNotes: c.compliance_notes || null,
-        sortOrder: i,
-      }).returning({ id: schema.generatedAdCopy.id });
-      if (row) inserted.push({ id: row.id, copyText: [c.primary_text_medium, c.headlines, c.cta_recommendation].filter(Boolean).join(" ") || null });
-    }
-
-    await db
-      .update(schema.adCopyRequests)
-      .set({ status: "complete", updatedAt: new Date() })
-      .where(eq(schema.adCopyRequests.id, requestId));
-
-    // Quality Control gate — one review per concept. Text rows carry no client_id, so
-    // the client is resolved from the request's brand name.
-    const [reqRow] = await db
-      .select({ brand: schema.adCopyRequests.brand })
-      .from(schema.adCopyRequests)
-      .where(eq(schema.adCopyRequests.id, requestId))
-      .limit(1);
-    await enqueueTextBatch("ad_copy", inserted, await resolveTextClientId(reqRow?.brand));
-  }
+  const status = update?.status ?? req.status;
 
   await db.insert(schema.activityLog).values({
-    action: "ad_copy_complete",
+    action: status === "error" ? "ad_copy_error" : "ad_copy_complete",
     resourceType: "ad_copy_request",
     resourceId: requestId,
-    details: { conceptCount: concepts?.length || 0 },
+    details: { status, conceptCount: saved, queuedForQc: toQueue.length, ...(callback.errorMessage ? { error: callback.errorMessage } : {}) },
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, status, conceptCount: saved, queuedForQc: toQueue.length });
 }

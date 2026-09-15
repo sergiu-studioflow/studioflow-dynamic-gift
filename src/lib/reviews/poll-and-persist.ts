@@ -20,6 +20,9 @@ import { BRAND_SLUG } from "@/lib/static-ads/config";
 
 type Asset = typeof schema.reviewGraphicAssets.$inferSelect;
 
+/** Kie images normally land within minutes; one still pending after this is treated as lost. */
+const ASSET_TIMEOUT_MS = 60 * 60 * 1000;
+
 async function persistAssetToR2(asset: Asset, sourceUrl: string, clientId: string | null): Promise<void> {
   let finalUrl = sourceUrl;
   try {
@@ -118,13 +121,14 @@ export async function sweepReviewGraphics(opts: {
     .innerJoin(schema.reviewGraphics, eq(schema.reviewGraphicAssets.graphicId, schema.reviewGraphics.id))
     .where(eq(schema.reviewGraphicAssets.status, "generating"));
 
-  const candidates = rows.filter(
+  const scoped = rows.filter(
     (r) =>
-      !!r.asset.kieJobId &&
       (opts.clientId == null || r.clientId === opts.clientId) &&
       (opts.graphicId == null || r.asset.graphicId === opts.graphicId)
   );
-  if (candidates.length === 0) return { swept: 0 };
+  const candidates = scoped.filter((r) => !!r.asset.kieJobId);
+  const expired = scoped.filter((r) => Date.now() - new Date(r.asset.createdAt).getTime() > ASSET_TIMEOUT_MS);
+  if (candidates.length === 0 && expired.length === 0) return { swept: 0 };
 
   await Promise.allSettled(
     candidates.map((r) =>
@@ -135,8 +139,22 @@ export async function sweepReviewGraphics(opts: {
     )
   );
 
+  // A job that never settles (lost at Kie, or no job id was saved) would keep its
+  // set "generating" — unapprovable, and polled by the gallery — forever. Anything
+  // the poll above just settled is untouched (conditional on still generating).
+  for (const r of expired) {
+    try {
+      await db
+        .update(schema.reviewGraphicAssets)
+        .set({ status: "error", errorMessage: "Timed out: the image never finished generating.", updatedAt: new Date() })
+        .where(and(eq(schema.reviewGraphicAssets.id, r.asset.id), eq(schema.reviewGraphicAssets.status, "generating")));
+    } catch (err) {
+      console.error(`[reviews/sweep] expire ${r.asset.id}:`, err);
+    }
+  }
+
   // Reconcile each affected parent
-  const parentIds = Array.from(new Set(candidates.map((r) => r.asset.graphicId)));
+  const parentIds = Array.from(new Set([...candidates, ...expired].map((r) => r.asset.graphicId)));
   for (const pid of parentIds) {
     try {
       await reconcileParent(pid);

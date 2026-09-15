@@ -3,6 +3,7 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { eq, asc } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { isShippable, QC_HELD } from "@/lib/qc/gate";
+import { deleteTextReviewsForRequest } from "@/lib/qc/enqueue";
 
 const isHeld = (s?: string | null) => QC_HELD.includes(s ?? "skipped");
 
@@ -74,7 +75,9 @@ export async function DELETE(
     return NextResponse.json({ error: "Request not found" }, { status: 404 });
   }
 
-  // CASCADE handles generated_ad_copy deletion
+  // CASCADE handles generated_ad_copy deletion. Their QC reviews have no FK, so remove them
+  // first or they linger in the Quality Control queue.
+  await deleteTextReviewsForRequest("ad_copy", id);
   await db
     .delete(schema.adCopyRequests)
     .where(eq(schema.adCopyRequests.id, id));

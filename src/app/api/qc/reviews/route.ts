@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import { toAccessibleUrl } from "@/lib/r2";
-import { SOURCE_SYSTEMS, type SourceSystem } from "@/lib/qc/constants";
+import { SOURCE_SYSTEMS, TEXT_SYSTEMS, type SourceSystem } from "@/lib/qc/constants";
 import { enqueueGateReview } from "@/lib/qc/enqueue";
+import { loadTextSources, textSourceKey, type TextSource } from "@/lib/qc/grade";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -25,10 +26,15 @@ async function textRowExists(sourceSystem: SourceSystem, id: string): Promise<bo
   return r.length > 0;
 }
 
+/** A review still waiting on a human: an AI flag, a human rejection not yet dismissed, or a grade that errored out. */
+const needsDecision = (r: { status: string; overallPass: boolean | null }) =>
+  r.status === "failed" || (r.status === "complete" && r.overallPass === false);
+
 /**
- * GET /api/qc/reviews?clientId=&source=&status=
+ * GET /api/qc/reviews?clientId=&source=&status=&queue=held
  * The QC queue for one client. clientId is REQUIRED — this portal is multi-client and a
- * review list is never global.
+ * review list is never global. queue=held returns only reviews waiting on a human, however
+ * old — the plain list is the most recent LIMIT, which a busy client outgrows in a few runs.
  */
 export async function GET(req: NextRequest) {
   const authResult = await requireAuth();
@@ -39,12 +45,21 @@ export async function GET(req: NextRequest) {
 
   const source = req.nextUrl.searchParams.get("source");
   const status = req.nextUrl.searchParams.get("status");
+  const queue = req.nextUrl.searchParams.get("queue");
 
   const conditions = [eq(schema.gateReviews.clientId, clientId)];
   if (source && SOURCE_SYSTEMS.includes(source as SourceSystem)) {
     conditions.push(eq(schema.gateReviews.sourceSystem, source));
   }
   if (status) conditions.push(eq(schema.gateReviews.status, status));
+  if (queue === "held") {
+    conditions.push(
+      or(
+        eq(schema.gateReviews.status, "failed"),
+        and(eq(schema.gateReviews.status, "complete"), eq(schema.gateReviews.overallPass, false))
+      )!
+    );
+  }
 
   const rows = await db
     .select()
@@ -53,12 +68,26 @@ export async function GET(req: NextRequest) {
     .orderBy(desc(schema.gateReviews.createdAt))
     .limit(LIMIT);
 
+  // The held queue carries the copy/idea/brief under review, so a text piece is never
+  // approved or rejected from its scorecard alone.
+  const texts =
+    queue === "held"
+      ? await loadTextSources(
+          rows.filter((r) => needsDecision(r) && TEXT_SYSTEMS.includes(r.sourceSystem as SourceSystem))
+        )
+      : new Map<string, TextSource>();
+
   // Presign private-R2 assets so the queue can render thumbnails.
   const reviews = await Promise.all(
-    rows.map(async (r) => ({
-      ...r,
-      assetUrl: r.assetPath ? await toAccessibleUrl(r.assetPath).catch(() => r.assetPath) : null,
-    }))
+    rows.map(async (r) => {
+      const text = r.sourceId ? texts.get(textSourceKey(r.sourceSystem, r.sourceId)) : undefined;
+      return {
+        ...r,
+        assetUrl: r.assetPath ? await toAccessibleUrl(r.assetPath).catch(() => r.assetPath) : null,
+        sourceText: text?.body ?? null,
+        requestId: text?.requestId ?? null,
+      };
+    })
   );
 
   return NextResponse.json({ reviews });

@@ -14,6 +14,8 @@ const TABS = [
 export default function ReviewGraphicsPage() {
   const [activeTab, setActiveTab] = useState("reviews");
   const [galleryRefresh, setGalleryRefresh] = useState(0);
+  // Partial generation failures, shown on the gallery the user is sent to.
+  const [galleryNotice, setGalleryNotice] = useState<string | null>(null);
 
   return (
     <div className="flex flex-col h-full -m-10 -mt-12">
@@ -43,7 +45,8 @@ export default function ReviewGraphicsPage() {
         {activeTab === "reviews" && (
           <div className="p-6">
             <ReviewList
-              onGenerated={() => {
+              onGenerated={(notice) => {
+                setGalleryNotice(notice ?? null);
                 setGalleryRefresh((n) => n + 1);
                 setActiveTab("gallery");
               }}
@@ -52,7 +55,11 @@ export default function ReviewGraphicsPage() {
         )}
         {activeTab === "gallery" && (
           <div className="p-6">
-            <ReviewGallery refreshTrigger={galleryRefresh} />
+            <ReviewGallery
+              refreshTrigger={galleryRefresh}
+              notice={galleryNotice}
+              onDismissNotice={() => setGalleryNotice(null)}
+            />
           </div>
         )}
       </div>

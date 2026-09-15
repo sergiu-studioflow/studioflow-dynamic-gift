@@ -44,7 +44,45 @@ const FILTERS = [
   { key: "all", label: "All reviews" },
 ];
 
-export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
+// After "Pull latest reviews" the tab drives the brand's fetch itself, so new
+// reviews land while the page is open; past the cap the scheduled sweep finishes it.
+const FETCH_POLL_MS = 20_000;
+const FETCH_WATCH_MAX_MS = 10 * 60_000;
+
+type GenerateResponse = {
+  count?: number;
+  message?: string;
+  error?: string;
+  errors?: Array<{ reviewerName?: string | null; error: string }>;
+};
+
+type FetchStartResponse = {
+  error?: string;
+  started?: number;
+  skipped?: number;
+  errors?: Array<{ brand: string; error: string }>;
+  inProgress?: Array<{ lastError: string | null }>;
+  notConfigured?: string | null;
+};
+
+type FetchProgressResponse = {
+  stillRunning: number;
+  latestRun: { status: string; errorMessage: string | null; reviewsNew: number } | null;
+};
+
+/** Failure text from a generate response (whole request or per review), or null. */
+function generationFailure(data: GenerateResponse): string | null {
+  if (data.error) return data.error;
+  if (!Array.isArray(data.errors) || data.errors.length === 0) return null;
+  return data.errors
+    .map((e) => {
+      const who = e.reviewerName?.trim().split(/\s+/)[0];
+      return who ? `${who}: ${e.error}` : e.error;
+    })
+    .join(" · ");
+}
+
+export function ReviewList({ onGenerated }: { onGenerated: (notice?: string) => void }) {
   const { clientId, clientName, clientSlug, isReady } = useClient();
   const [filter, setFilter] = useState("qualifying");
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -56,6 +94,11 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  // Brand whose review fetch is being watched (null = none).
+  const [watchingClientId, setWatchingClientId] = useState<string | null>(null);
+  const watchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const watchId = useRef(0);
+  const watching = watchingClientId !== null && watchingClientId === clientId;
 
   const load = useCallback(async () => {
     if (!clientId) return;
@@ -75,6 +118,27 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
     if (isReady) load();
   }, [load, isReady]);
 
+  // Latest `load` and brand for the fetch watcher, which outlives renders.
+  const loadRef = useRef(load);
+  const clientIdRef = useRef(clientId);
+  useEffect(() => {
+    loadRef.current = load;
+    clientIdRef.current = clientId;
+  }, [load, clientId]);
+
+  // Brand switch or unmount: stop driving a fetch started for the previous brand.
+  // Bumping the (live) watch id invalidates a tick that's mid-request.
+  useEffect(() => {
+    const ids = watchId;
+    const timer = watchTimer;
+    return () => {
+      ids.current++;
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+      setWatchingClientId(null);
+    };
+  }, [clientId]);
+
   // close the "generate newest" menu on outside click
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -84,19 +148,35 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  async function generate(reviewId: string) {
-    if (!clientId) return;
-    setBusyId(reviewId);
+  /** Send one generate request; on success go to the gallery (carrying any partial failures), else show why. */
+  async function requestGeneration(body: object, emptyMessage: string) {
     try {
       const res = await fetch("/api/review-graphics/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientId, reviewId }),
+        body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (res.ok && data.count > 0) {
-        setTimeout(onGenerated, 400);
+      const data: GenerateResponse = await res.json().catch(() => ({}));
+      const failure = generationFailure(data);
+      if (res.ok && (data.count ?? 0) > 0) {
+        setTimeout(() => onGenerated(failure ?? undefined), 400);
+      } else {
+        setNotice({
+          kind: "err",
+          text: failure || data.message || (res.ok ? emptyMessage : `Generation failed (HTTP ${res.status}).`),
+        });
       }
+    } catch {
+      setNotice({ kind: "err", text: "Generation failed — couldn't reach the server." });
+    }
+  }
+
+  async function generate(reviewId: string) {
+    if (!clientId) return;
+    setBusyId(reviewId);
+    setNotice(null);
+    try {
+      await requestGeneration({ clientId, reviewId }, "Nothing was generated for this review.");
     } finally {
       setBusyId(null);
     }
@@ -108,38 +188,91 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
     setBulkBusy(true);
     setNotice(null);
     try {
-      const res = await fetch("/api/review-graphics/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientId, limit: n }),
-      });
-      const data = await res.json();
-      if (res.ok && data.count > 0) {
-        setTimeout(onGenerated, 400);
-      } else {
-        setNotice({ kind: "err", text: data.message || "No new reviews with photos to generate from." });
-      }
-    } catch {
-      setNotice({ kind: "err", text: "Generation failed." });
+      await requestGeneration({ clientId, limit: n }, "No new reviews with photos to generate from.");
     } finally {
       setBulkBusy(false);
     }
   }
 
+  /** Poll the brand's in-flight review fetch until it finishes, fails, or the watch cap passes. */
+  function watchReviewFetch(forClientId: string) {
+    if (watchTimer.current) clearTimeout(watchTimer.current);
+    const myWatch = ++watchId.current;
+    const deadline = Date.now() + FETCH_WATCH_MAX_MS;
+    setWatchingClientId(forClientId);
+
+    const tick = async () => {
+      watchTimer.current = null;
+      let progress: FetchProgressResponse | null = null;
+      try {
+        const res = await fetch(`/api/review-graphics/reviews/fetch?clientId=${forClientId}`);
+        if (res.ok) progress = await res.json();
+      } catch {
+        // transient — retry on the next tick
+      }
+      if (watchId.current !== myWatch || clientIdRef.current !== forClientId) return;
+
+      if (progress && progress.stillRunning === 0) {
+        setWatchingClientId(null);
+        const run = progress.latestRun;
+        if (run?.status === "error") {
+          setNotice({ kind: "err", text: `Review fetch failed: ${run.errorMessage || "unknown error"}` });
+        } else {
+          const n = run?.reviewsNew ?? 0;
+          setNotice({
+            kind: "ok",
+            text: n > 0 ? `Fetched ${n} new review${n === 1 ? "" : "s"} from Google.` : "Review fetch finished — no new reviews since the last fetch.",
+          });
+        }
+        loadRef.current();
+        return;
+      }
+      if (Date.now() >= deadline) {
+        setWatchingClientId(null);
+        setNotice({
+          kind: "ok",
+          text: "The review fetch is still running. Its reviews will be added by the background sync when it finishes — check back later.",
+        });
+        return;
+      }
+      watchTimer.current = setTimeout(tick, FETCH_POLL_MS);
+    };
+
+    watchTimer.current = setTimeout(tick, FETCH_POLL_MS);
+  }
+
   async function pullLatest() {
     if (!clientId) return;
+    const forClientId = clientId;
     setPulling(true);
     setNotice(null);
     try {
-      const res = await fetch(`/api/cron/review-ingest?clientId=${clientId}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to start review fetch");
-      if (data.started > 0) {
-        setNotice({ kind: "ok", text: "Fetching the latest reviews from Google — new ones appear within a few minutes." });
-      } else if (data.skipped > 0) {
-        setNotice({ kind: "ok", text: "A review fetch is already running — give it a minute, then refresh." });
+      const res = await fetch("/api/review-graphics/reviews/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId: forClientId }),
+      });
+      const data: FetchStartResponse = await res.json().catch(() => ({}));
+      if (clientIdRef.current !== forClientId) return; // brand switched mid-request
+      if (!res.ok) throw new Error(data.error || `Couldn't start the review fetch (HTTP ${res.status}).`);
+
+      if (data.errors && data.errors.length > 0) {
+        setNotice({ kind: "err", text: `Couldn't start the review fetch: ${data.errors.map((e) => e.error).join(" · ")}` });
+      } else if ((data.started ?? 0) > 0) {
+        setNotice({
+          kind: "ok",
+          text: "Fetching the latest reviews from Google. This usually takes a few minutes — keep this page open and they'll appear here, or check back later.",
+        });
+        watchReviewFetch(forClientId);
+      } else if ((data.skipped ?? 0) > 0) {
+        const lastError = data.inProgress?.find((p) => p.lastError)?.lastError;
+        setNotice({
+          kind: "ok",
+          text: `A review fetch for this brand is already running — waiting for it to finish.${lastError ? ` (Last check failed: ${lastError})` : ""}`,
+        });
+        watchReviewFetch(forClientId);
       } else {
-        setNotice({ kind: "err", text: "This brand has no Google Maps URL configured for reviews yet." });
+        setNotice({ kind: "err", text: data.notConfigured || "This brand isn't set up for review fetching yet." });
       }
     } catch (e) {
       setNotice({ kind: "err", text: e instanceof Error ? e.message : "Failed to fetch reviews" });
@@ -148,7 +281,25 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
     }
   }
 
-  if (!isReady || loading) {
+  if (!isReady) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!clientId) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-muted-foreground/60">
+        <MessageSquare className="h-12 w-12 mb-3" />
+        <p className="text-sm">Select a brand to see its reviews</p>
+        <p className="text-[11px] text-muted-foreground/50">Use the client switcher in the sidebar — reviews are fetched per brand.</p>
+      </div>
+    );
+  }
+
+  if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -181,11 +332,11 @@ export function ReviewList({ onGenerated }: { onGenerated: () => void }) {
           </span>
           <button
             onClick={pullLatest}
-            disabled={pulling}
+            disabled={pulling || watching}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground transition-all hover:text-foreground hover:border-primary/30 disabled:opacity-50"
           >
-            {pulling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            Pull latest reviews
+            {pulling || watching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            {watching ? "Fetching reviews…" : "Pull latest reviews"}
           </button>
           {/* Generate newest N */}
           <div className="relative" ref={menuRef}>

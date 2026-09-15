@@ -1,65 +1,80 @@
 import { db, schema } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { enqueueTextBatch } from "@/lib/qc/enqueue";
 import { resolveTextClientId } from "@/lib/qc/grade";
+import { callbackStatusUpdate, hasValidWebhookSecret, parseCompletionCallback } from "../_lib/text-callback";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
+/**
+ * POST /api/webhook/ideation-complete   x-webhook-secret header, body { requestId, status }
+ *
+ * The n8n workflow has already saved the ideas and set the request's status; this reads back
+ * what it wrote and queues it for Quality Control. Safe to redeliver: only ideas not yet
+ * queued are enqueued, and nothing is inserted here.
+ */
 export async function POST(request: NextRequest) {
-  const secret = request.headers.get("x-webhook-secret");
-  if (secret !== process.env.WEBHOOK_SECRET) {
+  if (!hasValidWebhookSecret(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
-  const { requestId, ideas } = body;
+  const callback = await parseCompletionCallback(request);
+  if ("error" in callback) return NextResponse.json({ error: callback.error }, { status: 400 });
+  const { requestId } = callback;
 
-  if (!requestId || !Array.isArray(ideas)) {
-    return NextResponse.json(
-      { error: "requestId and ideas array required" },
-      { status: 400 }
-    );
-  }
-
-  const inserted: Array<{ id: string; copyText: string | null }> = [];
-  for (let i = 0; i < ideas.length; i++) {
-    const idea = ideas[i];
-    const [row] = await db.insert(schema.contentIdeas).values({
-      requestId,
-      hook: idea.hook || "",
-      contentType: idea.content_type || idea.contentType || "Product Features",
-      suggestedAngle: idea.suggested_angle || idea.suggestedAngle || "",
-      visualDirection: idea.visual_direction || idea.visualDirection || "",
-      platformRecommendation:
-        idea.platform_recommendation || idea.platformRecommendation || "Facebook",
-      coreValueProps: idea.core_value_props || idea.coreValueProps || null,
-      copyDirection: idea.copy_direction || idea.copyDirection || null,
-      sortOrder: i,
-    }).returning({ id: schema.contentIdeas.id });
-    if (row) inserted.push({ id: row.id, copyText: idea.hook || null });
-  }
-
-  await db
-    .update(schema.ideationRequests)
-    .set({ status: "complete", updatedAt: new Date() })
-    .where(eq(schema.ideationRequests.id, requestId));
-
-  // Quality Control gate — one review per idea. A run emits up to 25, which is why the
-  // text lane has its own larger claim budget and runs concurrently (qc/pipeline.ts).
-  const [reqRow] = await db
-    .select({ brand: schema.ideationRequests.brand })
+  const [req] = await db
+    .select({ brand: schema.ideationRequests.brand, status: schema.ideationRequests.status })
     .from(schema.ideationRequests)
     .where(eq(schema.ideationRequests.id, requestId))
     .limit(1);
-  await enqueueTextBatch("ideation", inserted, await resolveTextClientId(reqRow?.brand));
+  if (!req) return NextResponse.json({ error: "Request not found" }, { status: 404 });
+
+  // Quality Control gate — one review per idea not yet queued. A run saves up to 30, which is
+  // why the text lane has its own larger claim budget and runs concurrently (qc/pipeline.ts).
+  const toQueue = await db
+    .select({ id: schema.contentIdeas.id, hook: schema.contentIdeas.hook })
+    .from(schema.contentIdeas)
+    .where(
+      and(
+        eq(schema.contentIdeas.requestId, requestId),
+        isNull(schema.contentIdeas.qcReviewId),
+        eq(schema.contentIdeas.qcStatus, "pending")
+      )
+    );
+  await enqueueTextBatch(
+    "ideation",
+    toQueue.map((row) => ({ id: row.id, copyText: row.hook || null })),
+    await resolveTextClientId(req.brand)
+  );
+
+  const [{ saved }] = await db
+    .select({ saved: sql<number>`count(*)::int` })
+    .from(schema.contentIdeas)
+    .where(eq(schema.contentIdeas.requestId, requestId));
+
+  const update = callbackStatusUpdate({
+    current: req.status,
+    inFlightStatuses: ["new", "processing"],
+    callback,
+    saved,
+    noun: "ideas",
+  });
+  if (update) {
+    await db
+      .update(schema.ideationRequests)
+      .set({ ...update, updatedAt: new Date() })
+      .where(eq(schema.ideationRequests.id, requestId));
+  }
+  const status = update?.status ?? req.status;
 
   await db.insert(schema.activityLog).values({
-    action: "ideation_complete",
+    action: status === "error" ? "ideation_error" : "ideation_complete",
     resourceType: "ideation_request",
     resourceId: requestId,
-    details: { ideaCount: ideas.length },
+    details: { status, ideaCount: saved, queuedForQc: toQueue.length, ...(callback.errorMessage ? { error: callback.errorMessage } : {}) },
   });
 
-  return NextResponse.json({ ok: true, ideaCount: ideas.length });
+  return NextResponse.json({ ok: true, status, ideaCount: saved, queuedForQc: toQueue.length });
 }

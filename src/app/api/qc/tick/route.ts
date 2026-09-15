@@ -14,6 +14,10 @@ export const maxDuration = 120;
 export async function POST() {
   const authResult = await requireAuth();
   if (isAuthError(authResult)) return authResult;
+  // Grading spends model credits — read-only accounts don't drive it.
+  if (authResult.portalUser.role === "viewer") {
+    return NextResponse.json({ graded: 0, error: "Viewers cannot run grading" }, { status: 403 });
+  }
 
   try {
     const graded = await runGateTick();

@@ -2,16 +2,20 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Loader2, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { slugify, cn } from "@/lib/utils";
 import { useClient } from "@/lib/client-context";
+import { usePortalRole } from "@/components/clients/portal-role";
 
+// The category becomes the brand's vertical in the Static-Ad Prompt Builder, so the
+// options describe Dynamic Gift's promotional-products brands, not DTC verticals.
 const CATEGORIES = [
-  "Supplements", "Skincare", "Health & Wellness", "Fashion", "Food & Beverage",
-  "Beauty", "Fitness", "Home & Living", "Tech", "SaaS", "Finance",
-  "E-commerce", "Education", "Entertainment", "Other",
+  "Promotional Products", "Custom Apparel & Headwear", "Lanyards & Badges",
+  "Event Displays & Signage", "Inflatables", "Awards & Medals", "Corporate Gifting", "Other",
 ];
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 const MARKETS = [
   "Australia", "United States", "United Kingdom", "Canada", "Europe",
@@ -33,6 +37,7 @@ type FormData = {
 
 export default function NewClientPage() {
   const router = useRouter();
+  const canAddClients = usePortalRole() === "admin";
   const { setClient, refetchClients } = useClient();
   const [step, setStep] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -45,7 +50,9 @@ export default function NewClientPage() {
     primaryMarket: "",
     currency: "",
     cluster: "",
-    brandColor: "#23c3e8",
+    // Empty until someone picks one: the placeholder static prompt and the Prompt
+    // Builder treat a recorded colour as the brand's confirmed colour.
+    brandColor: "",
     notes: "",
   });
 
@@ -59,6 +66,10 @@ export default function NewClientPage() {
   async function handleCreate() {
     if (!form.clientName.trim()) {
       setError("Client name is required");
+      return;
+    }
+    if (form.brandColor && !HEX_COLOR.test(form.brandColor.trim())) {
+      setError("Brand colour must be a hex value like #1a2b3c, or left empty.");
       return;
     }
 
@@ -76,14 +87,14 @@ export default function NewClientPage() {
           primaryMarket: form.primaryMarket || undefined,
           currency: form.currency || undefined,
           cluster: form.cluster || undefined,
-          brandColor: form.brandColor || undefined,
+          brandColor: form.brandColor.trim() || undefined,
           notes: form.notes || undefined,
         }),
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Failed to create client");
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || `Failed to create client (${res.status})`);
         setIsSubmitting(false);
         return;
       }
@@ -96,10 +107,34 @@ export default function NewClientPage() {
 
       // Navigate to client detail page
       router.push(`/clients/${client.clientSlug}`);
-    } catch (err) {
+    } catch {
       setError("Something went wrong. Please try again.");
       setIsSubmitting(false);
     }
+  }
+
+  if (!canAddClients) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-6">
+        <Link
+          href="/clients"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to Clients
+        </Link>
+        <div className="flex items-start gap-3 rounded-xl border border-border/50 bg-card p-6">
+          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          <div>
+            <h1 className="text-lg font-semibold">Only admins can add clients</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Adding a client provisions its storage, brand intelligence and ad prompts. Ask a portal admin to add
+              it for you.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const steps = [
@@ -162,7 +197,7 @@ export default function NewClientPage() {
                 type="text"
                 value={form.clientName}
                 onChange={(e) => updateForm({ clientName: e.target.value })}
-                placeholder="e.g. Lifecykel"
+                placeholder="Brand name"
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-foreground/30 transition-colors"
                 autoFocus
               />
@@ -203,17 +238,35 @@ export default function NewClientPage() {
               <div className="flex items-center gap-3">
                 <input
                   type="color"
-                  value={form.brandColor}
+                  aria-label="Pick brand colour"
+                  // A colour input can't be empty; show white, dimmed, until one is picked.
+                  value={HEX_COLOR.test(form.brandColor) ? form.brandColor : "#ffffff"}
                   onChange={(e) => updateForm({ brandColor: e.target.value })}
-                  className="h-9 w-12 cursor-pointer rounded border border-border"
+                  className={cn(
+                    "h-9 w-12 cursor-pointer rounded border border-border",
+                    !form.brandColor && "opacity-40"
+                  )}
                 />
                 <input
                   type="text"
                   value={form.brandColor}
                   onChange={(e) => updateForm({ brandColor: e.target.value })}
+                  placeholder="Not set"
                   className="w-28 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-foreground/30 transition-colors"
                 />
+                {form.brandColor && (
+                  <button
+                    type="button"
+                    onClick={() => updateForm({ brandColor: "" })}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Optional. Leave empty unless you know the brand&apos;s exact colour — ad prompts treat it as confirmed.
+              </p>
             </div>
           </div>
         )}
@@ -254,7 +307,7 @@ export default function NewClientPage() {
                 type="text"
                 value={form.cluster}
                 onChange={(e) => updateForm({ cluster: e.target.value })}
-                placeholder="e.g. Supplements, Skincare (optional grouping)"
+                placeholder="e.g. Apparel, Events (optional grouping)"
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-foreground/30 transition-colors"
               />
               <p className="mt-1 text-xs text-muted-foreground">
@@ -287,6 +340,7 @@ export default function NewClientPage() {
               {form.primaryMarket && <DetailRow label="Market" value={form.primaryMarket} />}
               {form.currency && <DetailRow label="Currency" value={form.currency} />}
               {form.cluster && <DetailRow label="Cluster" value={form.cluster} />}
+              <DetailRow label="Brand Color" value={form.brandColor.trim() || "Not set"} mono={!!form.brandColor} />
             </div>
 
             <div className="space-y-2 rounded-lg border border-border/50 p-4">
@@ -339,6 +393,10 @@ export default function NewClientPage() {
               onClick={() => {
                 if (step === 0 && !form.clientName.trim()) {
                   setError("Client name is required");
+                  return;
+                }
+                if (step === 0 && form.brandColor && !HEX_COLOR.test(form.brandColor.trim())) {
+                  setError("Brand colour must be a hex value like #1a2b3c, or left empty.");
                   return;
                 }
                 setStep(step + 1);

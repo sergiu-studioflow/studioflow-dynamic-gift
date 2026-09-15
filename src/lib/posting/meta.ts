@@ -6,7 +6,9 @@
  * page_id / ig_user_id live in the `social_accounts` table.
  *
  * Publishing model:
- *   - Facebook: POST /{page-id}/photos (or /videos) — publishes immediately.
+ *   - Facebook: POST /{page-id}/photos (or /videos) — publishes immediately. The Pages
+ *     API only accepts a Page access token here, exchanged from the System User token
+ *     via getPageAccessToken().
  *   - Instagram: create a media container → poll status_code=FINISHED → publish.
  *     IG has no native scheduling; our cron fires at the due time.
  *
@@ -19,6 +21,7 @@ const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
 export type MetaErrorCode =
   | "token_invalid"
+  | "permission_denied"
   | "media_error"
   | "rate_limited"
   | "quota_exceeded"
@@ -47,12 +50,19 @@ function classify(httpStatus: number, fbCode?: number, fbSubcode?: number): Meta
   }
   // Content-publishing-limit exceeded (IG)
   if (fbCode === 9007 && fbSubcode === 2207042) return "quota_exceeded";
+  // Permission errors ((#10), (#200)–(#299), (#3) capability, object hidden by permissions).
+  // Retrying cannot fix these — the asset/permission has to be granted in Business Manager.
+  if (fbCode === 3 || fbCode === 10 || (fbCode !== undefined && fbCode >= 200 && fbCode <= 299) ||
+      (fbCode === 100 && fbSubcode === 33)) {
+    return "permission_denied";
+  }
   // Media/content problems (bad image, aspect ratio, unreachable url, invalid param)
   if (fbCode === 100 || fbCode === 9007 || fbSubcode === 2207003 || fbSubcode === 2207008 ||
       fbSubcode === 2207009 || fbSubcode === 2207026 || fbSubcode === 36003) {
     return "media_error";
   }
   if (httpStatus >= 500) return "unknown";
+  if (httpStatus === 403) return "permission_denied";
   if (httpStatus === 400) return "media_error";
   return "unknown";
 }
@@ -149,7 +159,22 @@ export async function getIgPublishingLimit(
 // Facebook Page publishing
 // ---------------------------------------------------------------------------
 
-/** Publish a photo to a Facebook Page. Returns the created post id. */
+/**
+ * Exchange the System User token for this Page's access token. Page publishing with the
+ * System User token itself is rejected with a (#200) permissions error.
+ */
+export async function getPageAccessToken(pageId: string, token: string): Promise<string> {
+  const r = await graphFetch<{ access_token?: string }>(pageId, { params: { fields: "access_token" }, token });
+  if (!r.access_token) {
+    throw new MetaGraphError(
+      "Meta returned no Page access token — assign this Page to the System User with content-publishing permission in Business Settings.",
+      { code: "permission_denied", httpStatus: 200 }
+    );
+  }
+  return r.access_token;
+}
+
+/** Publish a photo to a Facebook Page (`token` must be the Page access token). Returns the created post id. */
 export async function publishPagePhoto(
   pageId: string,
   opts: { imageUrl: string; message: string; token: string }

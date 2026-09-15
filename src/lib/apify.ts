@@ -16,8 +16,40 @@ export const GOOGLE_MAPS_REVIEWS_ACTOR_ID = "Xb8osYTtOjlsgI6k9";
 
 async function token(): Promise<string> {
   const t = await getApiKey("APIFY_TOKEN");
-  if (!t) throw new Error("APIFY_TOKEN is not configured");
+  if (!t) throw new Error("No Apify API token is configured (APIFY_TOKEN) — add the Apify key under Settings → API Keys.");
   return t;
+}
+
+/**
+ * Turn a failed Apify response into a readable error. Apify error bodies look
+ * like {"error":{"type":"platform-feature-disabled","message":"Monthly usage hard limit exceeded"}}.
+ * The monthly usage cap is called out explicitly: the account is shared across
+ * portals, so hitting it blocks every run until it resets or is raised.
+ */
+async function apifyError(action: string, res: Response): Promise<Error> {
+  const text = await res.text().catch(() => "");
+  let type = "";
+  let message = text.trim().slice(0, 300);
+  try {
+    const parsed = JSON.parse(text) as { error?: { type?: unknown; message?: unknown } };
+    if (parsed?.error) {
+      type = String(parsed.error.type ?? "");
+      message = String(parsed.error.message ?? message);
+    }
+  } catch {
+    // not JSON — keep the raw text
+  }
+  const detail = `Apify ${res.status}${message ? `: ${message}` : ""}`;
+  const usageLimit =
+    res.status === 402 ||
+    /monthly usage|usage (hard )?limit/i.test(message) ||
+    (type === "platform-feature-disabled" && /usage|limit|credit/i.test(message));
+  if (usageLimit) {
+    return new Error(
+      `The shared Apify account has reached its monthly usage limit, so ${action} is blocked until the limit resets or is raised (${detail}).`
+    );
+  }
+  return new Error(`${action.charAt(0).toUpperCase()}${action.slice(1)} failed (${detail}).`);
 }
 
 export type ApifyRunStatus =
@@ -52,8 +84,7 @@ export async function startReviewScrape(opts: {
   );
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Apify run start failed (${res.status}): ${text}`);
+    throw await apifyError("starting the review scrape", res);
   }
 
   const json = await res.json();
@@ -62,7 +93,12 @@ export async function startReviewScrape(opts: {
   return { runId: data.id, datasetId: data.defaultDatasetId ?? null };
 }
 
-export type RunStatusResult = { status: ApifyRunStatus; datasetId: string | null };
+export type RunStatusResult = {
+  status: ApifyRunStatus;
+  datasetId: string | null;
+  /** Apify's human-readable reason, e.g. why a run failed. */
+  statusMessage: string | null;
+};
 
 export async function getRunStatus(runId: string): Promise<RunStatusResult> {
   const res = await fetch(
@@ -70,12 +106,15 @@ export async function getRunStatus(runId: string): Promise<RunStatusResult> {
     { method: "GET" }
   );
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Apify run status failed (${res.status}): ${text}`);
+    throw await apifyError("checking the review scrape", res);
   }
   const json = await res.json();
   const data = json.data || {};
-  return { status: data.status as ApifyRunStatus, datasetId: data.defaultDatasetId ?? null };
+  return {
+    status: data.status as ApifyRunStatus,
+    datasetId: data.defaultDatasetId ?? null,
+    statusMessage: typeof data.statusMessage === "string" && data.statusMessage ? data.statusMessage : null,
+  };
 }
 
 /** Fetch dataset items (the scraped reviews). */
@@ -87,8 +126,7 @@ export async function getDatasetItems(datasetId: string, limit = 500): Promise<u
     { method: "GET" }
   );
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Apify dataset fetch failed (${res.status}): ${text}`);
+    throw await apifyError("downloading the scraped reviews", res);
   }
   const json = await res.json();
   return Array.isArray(json) ? json : [];

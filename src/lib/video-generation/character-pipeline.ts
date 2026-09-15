@@ -150,8 +150,10 @@ export async function extractPhysicalDescription(
     messages: [
       { role: "user", content: likenessJson },
     ],
-    maxTokens: 500,
-    budgetTokens: 200,
+    // 1024 is the API's minimum thinking budget — the old 200 was rejected with a 400 on
+    // every call, so no description was ever saved.
+    maxTokens: 2048,
+    budgetTokens: 1024,
   });
   return result.text.trim();
 }

@@ -2,9 +2,12 @@ import { db, schema } from "@/lib/db";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { asc, eq, inArray, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
-import { toAccessibleUrl, deleteFromR2, r2KeyFromUrl } from "@/lib/r2";
+import { toAccessibleUrl, deleteFromR2, ownedR2Key } from "@/lib/r2";
+import { advanceGeneratingCharacter, type CharacterRow } from "@/lib/video-generation/character-status";
 
 export const dynamic = "force-dynamic";
+
+const SWEEP_TIMEOUT_MS = 5000;
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
@@ -14,11 +17,32 @@ export async function GET(request: NextRequest) {
   const conditions = [];
   if (clientId) conditions.push(eq(schema.characters.clientId, clientId));
 
-  const rows = await db
+  const listed = await db
     .select()
     .from(schema.characters)
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(asc(schema.characters.name));
+
+  // Finish (or fail) characters still `generating` — nothing else sweeps them, so one whose
+  // form was closed mid-render would otherwise stay "generating" on its source photo forever.
+  const rows: CharacterRow[] = clientId
+    ? await Promise.all(
+        listed.map(async (row) => {
+          if (row.status !== "generating") return row;
+          try {
+            return await Promise.race([
+              advanceGeneratingCharacter(row),
+              new Promise<CharacterRow>((_, reject) =>
+                setTimeout(() => reject(new Error("character sweep timeout")), SWEEP_TIMEOUT_MS)
+              ),
+            ]);
+          } catch (err) {
+            console.warn(`[characters/GET] sweep ${row.id}:`, err instanceof Error ? err.message : err);
+            return row;
+          }
+        })
+      )
+    : listed;
 
   const withPreviews = await Promise.all(
     rows.map(async (row) => ({
@@ -78,17 +102,21 @@ export async function DELETE(request: NextRequest) {
 
   // Read rows first so we can clean up R2 after the DB delete.
   const rows = await db
-    .select({ id: schema.characters.id, imageUrl: schema.characters.imageUrl, sourceImageUrl: schema.characters.sourceImageUrl })
+    .select({ id: schema.characters.id, clientId: schema.characters.clientId, imageUrl: schema.characters.imageUrl, sourceImageUrl: schema.characters.sourceImageUrl })
     .from(schema.characters)
     .where(inArray(schema.characters.id, ids));
 
   await db.delete(schema.characters).where(inArray(schema.characters.id, ids));
 
-  // Best-effort R2 cleanup; logged-and-swallowed failures don't block the response.
+  // Best-effort R2 cleanup, only inside each character's own brand folder (shared bucket);
+  // logged-and-swallowed failures don't block the response.
+  const prefixes = new Map(
+    (await db.select({ id: schema.clients.id, storagePrefix: schema.clients.storagePrefix }).from(schema.clients))
+      .map((c) => [c.id, c.storagePrefix])
+  );
   for (const row of rows) {
     for (const url of [row.imageUrl, row.sourceImageUrl]) {
-      if (!url) continue;
-      const key = r2KeyFromUrl(url);
+      const key = row.clientId ? ownedR2Key(url, prefixes.get(row.clientId)) : null;
       if (!key) continue;
       try { await deleteFromR2(key); } catch (err) { console.warn(`[characters/DELETE] R2 cleanup failed for ${url}:`, err); }
     }

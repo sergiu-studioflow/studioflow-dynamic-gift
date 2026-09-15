@@ -29,9 +29,16 @@ export type PlanItem = {
   status: ItemStatus;
   brief: PlanBrief | null;
   previewUrl: string | null;
+  generationId: string | null;
   generationStatus: string | null;
+  /** The generated ad's Quality Control status (pending | flagged | approved | rejected | skipped). */
+  qcStatus: string | null;
+  scheduledPostId: string | null;
+  /** The linked post in the Post Scheduler, once queued. */
+  post: { status: string; scheduledAt: string | null; timezone: string } | null;
   errorMessage: string | null;
   sortOrder: number;
+  updatedAt: string;
 };
 
 export type MonthlyPlan = {
@@ -43,5 +50,6 @@ export type MonthlyPlan = {
   errorMessage: string | null;
   itemCount?: number;
   createdAt: string;
+  updatedAt: string;
   items?: PlanItem[];
 };

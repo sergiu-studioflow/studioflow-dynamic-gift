@@ -30,6 +30,8 @@ export function useGenerationTracker() {
   return useContext(GenerationTrackerContext);
 }
 
+const POLL_INTERVAL_MS = 4000;
+
 export function GenerationTrackerProvider({ children }: { children: React.ReactNode }) {
   const [generations, setGenerations] = useState<TrackedGeneration[]>([]);
   const pollIntervalsRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
@@ -56,65 +58,81 @@ export function GenerationTrackerProvider({ children }: { children: React.ReactN
     }
   }, []);
 
-  // Poll for active generations
+  // Poll every active generation. The server is the source of truth: `pending` means the
+  // prompt pipeline is still running, `processing` means the video is rendering, and
+  // `completed` / `error` (or a 404) are terminal — polling stops there. A pipeline that
+  // died is failed server-side by its abandon clock, so no poll runs forever.
   useEffect(() => {
-    const activeGens = generations.filter(
-      (g) => g.status === "pipeline" || g.status === "processing"
+    const intervals = pollIntervalsRef.current;
+    const activeIds = new Set(
+      generations.filter((g) => g.status === "pipeline" || g.status === "processing").map((g) => g.id)
     );
 
-    for (const gen of activeGens) {
-      if (pollIntervalsRef.current.has(gen.id)) continue;
+    const finish = (id: string, patch: Partial<TrackedGeneration>) => {
+      setGenerations((prev) => prev.map((g) => (g.id === id ? { ...g, ...patch } : g)));
+      const iv = intervals.get(id);
+      if (iv) {
+        clearInterval(iv);
+        intervals.delete(id);
+      }
+    };
+
+    for (const id of activeIds) {
+      if (intervals.has(id)) continue;
 
       const interval = setInterval(async () => {
         try {
-          const res = await fetch(`/api/video-generation/generate/${gen.id}`);
-          const data = await res.json();
+          const res = await fetch(`/api/video-generation/generate/${id}`);
+          if (res.status === 404) {
+            finish(id, { status: "error", errorMessage: "This generation no longer exists" });
+            return;
+          }
+          if (!res.ok) return; // transient — keep polling
 
-          if (data.status === "completed" && (data.videoPreviewUrl || data.videoUrl)) {
-            setGenerations((prev) =>
-              prev.map((g) =>
-                g.id === gen.id
-                  ? {
-                      ...g,
-                      status: "completed" as const,
-                      videoUrl: data.videoUrl,
-                      videoPreviewUrl: data.videoPreviewUrl || data.videoUrl,
-                    }
-                  : g
-              )
-            );
-            const iv = pollIntervalsRef.current.get(gen.id);
-            if (iv) { clearInterval(iv); pollIntervalsRef.current.delete(gen.id); }
+          const data = await res.json();
+          if (data.status === "completed") {
+            finish(id, {
+              status: "completed",
+              videoUrl: data.videoUrl,
+              videoPreviewUrl: data.videoPreviewUrl || data.videoUrl,
+            });
           } else if (data.status === "error") {
+            finish(id, { status: "error", errorMessage: data.errorMessage || "Video generation failed" });
+          } else {
+            const next: TrackedGeneration["status"] = data.status === "processing" ? "processing" : "pipeline";
             setGenerations((prev) =>
-              prev.map((g) =>
-                g.id === gen.id
-                  ? { ...g, status: "error" as const, errorMessage: data.errorMessage }
-                  : g
-              )
+              prev.map((g) => {
+                if (g.id !== id) return g;
+                const step = data.currentStep ?? g.currentStep;
+                return g.status !== next || g.currentStep !== step ? { ...g, status: next, currentStep: step } : g;
+              })
             );
-            const iv = pollIntervalsRef.current.get(gen.id);
-            if (iv) { clearInterval(iv); pollIntervalsRef.current.delete(gen.id); }
           }
         } catch {
           // transient
         }
-      }, 4000);
+      }, POLL_INTERVAL_MS);
 
-      pollIntervalsRef.current.set(gen.id, interval);
+      intervals.set(id, interval);
     }
 
-    // Cleanup intervals for generations no longer active
-    return () => {
-      for (const [id, interval] of pollIntervalsRef.current) {
-        const gen = generations.find((g) => g.id === id);
-        if (!gen || gen.status === "completed" || gen.status === "error") {
-          clearInterval(interval);
-          pollIntervalsRef.current.delete(id);
-        }
+    // Stop pollers for generations that finished or were dismissed.
+    for (const [id, interval] of intervals) {
+      if (!activeIds.has(id)) {
+        clearInterval(interval);
+        intervals.delete(id);
       }
-    };
+    }
   }, [generations]);
+
+  // Clear every poller when the provider unmounts.
+  useEffect(() => {
+    const intervals = pollIntervalsRef.current;
+    return () => {
+      for (const interval of intervals.values()) clearInterval(interval);
+      intervals.clear();
+    };
+  }, []);
 
   return (
     <GenerationTrackerContext.Provider value={{ generations, trackGeneration, dismissGeneration }}>

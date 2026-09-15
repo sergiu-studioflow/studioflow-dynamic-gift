@@ -14,8 +14,10 @@ export const maxDuration = 300;
  *
  * Picks the most recent qualifying, un-rendered reviews for the brand and
  * generates a testimonial creative set (captions + per-format Kie jobs) for
- * each. Images finish asynchronously via the sweep; rows start as draft once
- * generated. Approval happens in the gallery.
+ * each. Images finish asynchronously via the sweep; rows start as `generating`
+ * and become `draft` once an image lands. Approval happens in the gallery.
+ * Returns { generated, count, errors[] } — errors carry the real reason per
+ * review (caption failure, Kie submission failure).
  */
 export async function POST(req: NextRequest) {
   const authResult = await requireAuth();
@@ -85,20 +87,40 @@ export async function POST(req: NextRequest) {
   }
 
   const generated: string[] = [];
-  const errors: Array<{ reviewId: string; error: string }> = [];
+  const errors: Array<{ reviewId: string; reviewerName: string | null; error: string }> = [];
 
   for (const review of candidates) {
     try {
-      const graphicId = await generateReviewGraphicForReview({
+      const result = await generateReviewGraphicForReview({
         review,
         brandName: brand.name,
         userId: authResult.portalUser.id,
         brandContext,
       });
-      generated.push(graphicId);
+      const total = result.submitted + result.errors.length;
+      if (result.submitted === 0) {
+        errors.push({
+          reviewId: review.reviewId,
+          reviewerName: review.reviewerName,
+          error: `Image generation couldn't start: ${result.errors[0] || "unknown error"}`,
+        });
+      } else {
+        generated.push(result.graphicId);
+        if (result.errors.length > 0) {
+          errors.push({
+            reviewId: review.reviewId,
+            reviewerName: review.reviewerName,
+            error: `${result.errors.length} of ${total} image formats couldn't start: ${result.errors[0]}`,
+          });
+        }
+      }
     } catch (err) {
-      // Caption generation failed for this review — record and move on.
-      errors.push({ reviewId: review.reviewId, error: err instanceof Error ? err.message : String(err) });
+      // Caption generation (or saving the set) failed for this review — record and move on.
+      errors.push({
+        reviewId: review.reviewId,
+        reviewerName: review.reviewerName,
+        error: `Generation failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
   }
 

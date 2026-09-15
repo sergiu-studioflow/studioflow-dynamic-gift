@@ -13,10 +13,93 @@
  */
 
 import { db, schema } from "@/lib/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { ContractError, runFullBuild, type BuildContext } from "./index";
 import type { BrandType, Stage } from "./types";
 import { pickReferenceForClient } from "@/lib/static-ads/reference-selection";
+
+/**
+ * Job status for a copy of prompts that were live until a publish or restore
+ * replaced them. Never built, reviewed or swept (the sweep only claims pending /
+ * running) — a snapshot exists only to be restored.
+ *
+ * Most brands' Agent 1/2 prompts were hand-authored straight into
+ * client_static_ad_config and exist nowhere else, so before snapshots an approve
+ * was a one-way door. Stored as a job row so no schema change is needed; its
+ * brand_dna column holds `{ snapshot: { wasPlaceholder } }` instead of a Brand DNA.
+ */
+export const SNAPSHOT_STATUS = "snapshot";
+
+/** Whether a snapshot row captured the generic provisioning placeholders. */
+export function snapshotWasPlaceholder(brandDna: unknown): boolean {
+  return (brandDna as { snapshot?: { wasPlaceholder?: unknown } } | null)?.snapshot?.wasPlaceholder === true;
+}
+
+/**
+ * brands.settings.staticAdPromptsArePlaceholder is set to true only when
+ * provisioning seeds the generic prompts. Brands whose prompts were written by hand
+ * never had the flag, so a missing flag means brand-specific.
+ */
+export function promptsArePlaceholder(settings: unknown): boolean {
+  return (settings as { staticAdPromptsArePlaceholder?: unknown } | null)?.staticAdPromptsArePlaceholder === true;
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Keep a restorable copy of the brand's live prompts before they are overwritten.
+ * One snapshot per distinct prompt pair, so publish/restore cycles don't pile up rows.
+ */
+async function snapshotLivePrompts(
+  tx: Tx,
+  clientId: string,
+  incoming: { agent1Prompt: string; agent2Prompt: string },
+): Promise<void> {
+  const [live] = await tx
+    .select({
+      agent1Prompt: schema.clientStaticAdConfig.agent1Prompt,
+      agent2Prompt: schema.clientStaticAdConfig.agent2Prompt,
+      updatedAt: schema.clientStaticAdConfig.updatedAt,
+    })
+    .from(schema.clientStaticAdConfig)
+    .where(eq(schema.clientStaticAdConfig.clientId, clientId))
+    .limit(1)
+    .for("update");
+  if (!live?.agent1Prompt?.trim() || !live.agent2Prompt?.trim()) return;
+  if (live.agent1Prompt === incoming.agent1Prompt && live.agent2Prompt === incoming.agent2Prompt) return;
+
+  const [existing] = await tx
+    .select({ id: schema.clientStaticAdPromptJobs.id })
+    .from(schema.clientStaticAdPromptJobs)
+    .where(
+      and(
+        eq(schema.clientStaticAdPromptJobs.clientId, clientId),
+        eq(schema.clientStaticAdPromptJobs.status, SNAPSHOT_STATUS),
+        eq(schema.clientStaticAdPromptJobs.agent1Prompt, live.agent1Prompt),
+        eq(schema.clientStaticAdPromptJobs.agent2Prompt, live.agent2Prompt),
+      ),
+    )
+    .limit(1);
+  if (existing) return;
+
+  const [client] = await tx
+    .select({ settings: schema.clients.settings })
+    .from(schema.clients)
+    .where(eq(schema.clients.id, clientId))
+    .limit(1);
+
+  const now = new Date();
+  await tx.insert(schema.clientStaticAdPromptJobs).values({
+    clientId,
+    status: SNAPSHOT_STATUS,
+    agent1Prompt: live.agent1Prompt,
+    agent2Prompt: live.agent2Prompt,
+    brandDna: { snapshot: { wasPlaceholder: promptsArePlaceholder(client?.settings) } },
+    // When these prompts went live; created_at records when they were replaced.
+    publishedAt: live.updatedAt,
+    completedAt: now,
+  });
+}
 
 /** Assemble the pipeline input from a client's DB record + products. */
 export async function buildContextForClient(clientId: string): Promise<BuildContext> {
@@ -93,8 +176,11 @@ export async function buildContextForClient(clientId: string): Promise<BuildCont
       voice: intel.voice ?? null,
       constraints: intel.constraints ?? null,
     },
+    // Best candidates first — the study stage only studies the first few (see runStudy):
+    // hero products, then products with an image to look at.
     items: products
       .filter((p) => p.productName && !PLACEHOLDER_NAME.test(p.productName.trim()))
+      .sort((a, b) => Number(b.isHeroProduct) - Number(a.isHeroProduct) || Number(!!b.imageUrl) - Number(!!a.imageUrl))
       .map((p) => ({
         name: p.productName,
         imageUrl: p.imageUrl,
@@ -170,9 +256,9 @@ export async function executePromptJob(jobId: string): Promise<void> {
 }
 
 /**
- * Publish an awaiting-review job: write its drafts to clientStaticAdConfig, flip
- * the placeholder flag, store the Brand DNA section, mark the job published.
- * Called from the admin approve route. Atomic.
+ * Publish an awaiting-review job: snapshot the live prompts it replaces, write its
+ * drafts to clientStaticAdConfig, flip the placeholder flag, store the Brand DNA
+ * section, mark the job published. Called from the admin approve route. Atomic.
  */
 export async function publishJob(clientId: string, jobId: string): Promise<boolean> {
   const [job] = await db
@@ -188,8 +274,11 @@ export async function publishJob(clientId: string, jobId: string): Promise<boole
   // Publishing is the ONLY sanctioned writer of agent1Prompt/agent2Prompt: a
   // human reviews the draft and approves it. Everything else treats those
   // columns as fixed. Atomic, so a mid-write failure can never leave a brand
-  // with one new prompt and one old one.
+  // with one new prompt and one old one — or new prompts without the snapshot
+  // of the ones they replaced.
   await db.transaction(async (tx) => {
+    await snapshotLivePrompts(tx, clientId, { agent1Prompt: job.agent1Prompt!, agent2Prompt: job.agent2Prompt! });
+
     await tx
       .insert(schema.clientStaticAdConfig)
       .values({ clientId, agent1Prompt: job.agent1Prompt!, agent2Prompt: job.agent2Prompt! })
@@ -262,33 +351,70 @@ export async function publishJob(clientId: string, jobId: string): Promise<boole
 /** Mark an awaiting-review job rejected (does not touch live prompts). */
 export async function rejectJob(clientId: string, jobId: string): Promise<boolean> {
   // .returning() so a wrong jobId / wrong brand is a real 404 rather than a
-  // cheerful `ok: true` over a zero-row update.
+  // cheerful `ok: true` over a zero-row update. Only drafts can be rejected —
+  // never a published version or a snapshot someone may need to restore.
   const rows = await db
     .update(schema.clientStaticAdPromptJobs)
     .set({ status: "rejected", updatedAt: new Date() })
-    .where(and(eq(schema.clientStaticAdPromptJobs.id, jobId), eq(schema.clientStaticAdPromptJobs.clientId, clientId)))
+    .where(
+      and(
+        eq(schema.clientStaticAdPromptJobs.id, jobId),
+        eq(schema.clientStaticAdPromptJobs.clientId, clientId),
+        eq(schema.clientStaticAdPromptJobs.status, "awaiting_review"),
+      ),
+    )
     .returning({ id: schema.clientStaticAdPromptJobs.id });
   return rows.length > 0;
 }
 
 /**
- * Roll a client's live prompts back to a prior published job's drafts.
- * Used by the admin UI's one-click rollback.
+ * Roll a client's live prompts back to a prior published job, or to a snapshot of
+ * prompts that were live before a publish (e.g. the hand-authored originals).
+ * Used by the admin UI's one-click rollback. The prompts being replaced are
+ * snapshotted first, so a restore is itself reversible.
  */
 export async function rollbackToJob(clientId: string, jobId: string): Promise<boolean> {
   const [job] = await db
     .select()
     .from(schema.clientStaticAdPromptJobs)
-    .where(and(eq(schema.clientStaticAdPromptJobs.id, jobId), eq(schema.clientStaticAdPromptJobs.clientId, clientId)))
+    .where(
+      and(
+        eq(schema.clientStaticAdPromptJobs.id, jobId),
+        eq(schema.clientStaticAdPromptJobs.clientId, clientId),
+        // Never an unreviewed draft: restoring one would publish it without approval.
+        inArray(schema.clientStaticAdPromptJobs.status, ["published", SNAPSHOT_STATUS]),
+      ),
+    )
     .limit(1);
   if (!job || !job.agent1Prompt || !job.agent2Prompt) return false;
+  const agent1Prompt = job.agent1Prompt;
+  const agent2Prompt = job.agent2Prompt;
+  const isPlaceholder = job.status === SNAPSHOT_STATUS && snapshotWasPlaceholder(job.brandDna);
 
-  await db
-    .insert(schema.clientStaticAdConfig)
-    .values({ clientId, agent1Prompt: job.agent1Prompt, agent2Prompt: job.agent2Prompt })
-    .onConflictDoUpdate({
-      target: schema.clientStaticAdConfig.clientId,
-      set: { agent1Prompt: job.agent1Prompt, agent2Prompt: job.agent2Prompt, updatedAt: new Date() },
-    });
+  await db.transaction(async (tx) => {
+    await snapshotLivePrompts(tx, clientId, { agent1Prompt, agent2Prompt });
+
+    await tx
+      .insert(schema.clientStaticAdConfig)
+      .values({ clientId, agent1Prompt, agent2Prompt })
+      .onConflictDoUpdate({
+        target: schema.clientStaticAdConfig.clientId,
+        set: { agent1Prompt, agent2Prompt, updatedAt: new Date() },
+      });
+
+    // Keep the "generic vs brand-specific" badge true to what is now live.
+    const [client] = await tx
+      .select({ settings: schema.clients.settings })
+      .from(schema.clients)
+      .where(eq(schema.clients.id, clientId))
+      .limit(1);
+    await tx
+      .update(schema.clients)
+      .set({
+        settings: { ...((client?.settings as Record<string, unknown>) ?? {}), staticAdPromptsArePlaceholder: isPlaceholder },
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.clients.id, clientId));
+  });
   return true;
 }

@@ -9,17 +9,12 @@ import {
   Trash2,
   Loader2,
   Check,
-  X,
 } from "lucide-react";
 import { useClient } from "@/lib/client-context";
-import { META_AD_COUNTRIES } from "./countries";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { DEFAULT_META_AD_COUNTRY, META_AD_COUNTRIES } from "./countries";
+
+const DEFAULT_COUNTRY_LABEL =
+  META_AD_COUNTRIES.find((c) => c.value === DEFAULT_META_AD_COUNTRY)?.label ?? DEFAULT_META_AD_COUNTRY;
 
 interface Competitor {
   id: string;
@@ -49,7 +44,6 @@ export function CompetitorManagementTab({
   const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [newMetaPageId, setNewMetaPageId] = useState("");
-  const [newCountry, setNewCountry] = useState("GB");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -118,7 +112,6 @@ export function CompetitorManagementTab({
       }
       setNewName("");
       setNewMetaPageId("");
-      setNewCountry("GB");
       setShowAddForm(false);
       loadCompetitors();
       onRefresh();
@@ -156,13 +149,14 @@ export function CompetitorManagementTab({
           sourceId: competitor.id,
           competitorPageId: competitor.metaPageId,
           clientId,
+          country: DEFAULT_META_AD_COUNTRY,
         }),
       });
-      const data = await res.json();
-      if (data.empty) {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        setRefreshResult({ id: competitor.id, message: data.error || `Failed to trigger the scrape (HTTP ${res.status}).` });
+      } else if (data.empty) {
         setRefreshResult({ id: competitor.id, message: "No active ads found" });
-      } else if (data.error) {
-        setRefreshResult({ id: competitor.id, message: data.error });
       } else {
         setRefreshResult({ id: competitor.id, message: "Scrape triggered! Results will appear shortly." });
       }
@@ -227,23 +221,9 @@ export function CompetitorManagementTab({
               </p>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">
-                Country
-              </label>
-              <Select value={newCountry} onValueChange={setNewCountry}>
-                <SelectTrigger className="w-[200px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {META_AD_COUNTRIES.map((c) => (
-                    <SelectItem key={c.value} value={c.value}>
-                      {c.label} ({c.value})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <p className="text-[11px] text-muted-foreground/60">
+              Ads are scraped from the Meta Ad Library for {DEFAULT_COUNTRY_LABEL} ({DEFAULT_META_AD_COUNTRY}).
+            </p>
           </div>
 
           {addError && (
@@ -307,7 +287,7 @@ export function CompetitorManagementTab({
                 </div>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <a
-                    href={`https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&view_all_page_id=${competitor.metaPageId}`}
+                    href={`https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=${DEFAULT_META_AD_COUNTRY}&view_all_page_id=${competitor.metaPageId}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1 hover:text-primary truncate max-w-[300px]"

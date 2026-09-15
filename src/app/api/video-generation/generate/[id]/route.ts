@@ -6,6 +6,13 @@ import { pollVideoJob } from "@/lib/video-generation/video-provider";
 import { uploadToR2, toAccessibleUrl, r2KeyFromUrl } from "@/lib/r2";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 import { enqueueGateReview } from "@/lib/qc/enqueue";
+import {
+  failVideoGeneration,
+  isPipelineAbandoned,
+  isProcessingAbandoned,
+  PIPELINE_ABANDONED_MESSAGE,
+  PROCESSING_ABANDONED_MESSAGE,
+} from "@/lib/video-generation/abandon";
 
 export const dynamic = "force-dynamic";
 
@@ -89,6 +96,11 @@ export async function GET(
     return NextResponse.json(generation);
   }
 
+  // The inline prompt pipeline died (function timeout) before it could mark the row.
+  if (isPipelineAbandoned(generation)) {
+    return NextResponse.json(await failVideoGeneration(generation, PIPELINE_ABANDONED_MESSAGE));
+  }
+
   // Still processing — poll Muapi
   if (generation.status === "processing" && generation.muapiRequestId) {
     try {
@@ -165,13 +177,21 @@ export async function GET(
         });
       }
 
+      if (isProcessingAbandoned(generation)) {
+        return NextResponse.json(await failVideoGeneration(generation, PROCESSING_ABANDONED_MESSAGE));
+      }
+
       // Still processing
       return NextResponse.json({
         ...generation,
         muapiStatus: result.status,
       });
     } catch {
-      // Transient poll error — return current state
+      // Transient poll error — return current state, unless the provider has been failing
+      // to answer for longer than any render takes.
+      if (isProcessingAbandoned(generation)) {
+        return NextResponse.json(await failVideoGeneration(generation, PROCESSING_ABANDONED_MESSAGE));
+      }
       return NextResponse.json(generation);
     }
   }

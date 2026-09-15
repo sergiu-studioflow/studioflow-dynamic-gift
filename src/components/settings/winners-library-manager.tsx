@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Loader2, Plus, Trash2, Trophy, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useClient } from "@/lib/client-context";
+import { fitImageForUpload, readUploadResponse } from "@/lib/static-ads/upload-client";
 
 type Winner = {
   id: string;
@@ -19,6 +20,7 @@ export function WinnersLibraryManager() {
   const [winners, setWinners] = useState<Winner[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { clientId } = useClient();
@@ -39,19 +41,26 @@ export function WinnersLibraryManager() {
 
   const handleUpload = useCallback(async (file: File) => {
     if (!clientId) {
-      alert("Select a client before uploading a winner.");
+      setUploadError("Select a client before uploading a winner.");
       return;
     }
+    setUploadError(null);
     setUploading(true);
     try {
+      // Compress large images first — the upload goes through a function capped at 4.5 MB.
+      const fileToSend = await fitImageForUpload(file);
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", fileToSend);
       formData.append("name", file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "));
       formData.append("clientId", clientId);
       const res = await fetch("/api/winners", { method: "POST", body: formData });
-      if (res.ok) await fetchWinners();
-    } catch { /* ignore */ }
-    finally { setUploading(false); }
+      await readUploadResponse(res);
+      await fetchWinners();
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
   }, [fetchWinners, clientId]);
 
   const handleDelete = useCallback(async (id: string) => {
@@ -93,6 +102,9 @@ export function WinnersLibraryManager() {
           className="hidden"
         />
       </div>
+      {uploadError && (
+        <p className="-mt-2 mb-3 text-[11px] text-red-500">{uploadError}</p>
+      )}
 
       {/* Grid */}
       {loading ? (

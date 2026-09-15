@@ -107,7 +107,7 @@ export default async function SettingsPage() {
           <span className="text-xs text-muted-foreground ml-auto">AI service credentials</span>
         </div>
         <div className="p-5">
-          <ApiKeysManager />
+          <ApiKeysManager canEdit={userData?.portalUser?.role === "admin"} />
         </div>
       </div>
       {/* Security */}

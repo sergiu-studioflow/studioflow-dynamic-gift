@@ -3,9 +3,13 @@ import { requireAuth, isAuthError } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { isShippable } from "@/lib/qc/gate";
+import { getPresignedDownloadUrl, r2KeyFromStorageUrl } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+/** Lifetime of the signed download link — it is followed immediately. */
+const DOWNLOAD_URL_TTL_SECONDS = 300;
 
 /**
  * Quality Control download gate. Both generated-asset key layouts embed the owning row's
@@ -44,9 +48,28 @@ async function qcStatusForUrl(url: string): Promise<string | null | undefined> {
   return undefined; // not a gated asset path
 }
 
+function isR2Url(url: string): boolean {
+  const r2Public = (process.env.R2_PUBLIC_URL || "").trim();
+  if (r2Public && url.startsWith(`${r2Public}/`)) return true;
+  try {
+    const { protocol, hostname } = new URL(url);
+    return (
+      protocol === "https:" &&
+      (hostname.endsWith(".r2.dev") || hostname.endsWith(".r2.cloudflarestorage.com"))
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Proxy download — fetches image server-side and returns it with
- * Content-Disposition: attachment so the browser downloads it directly.
+ * GET /api/static-ads/download?url=&filename=[&format=json]
+ *
+ * Redirects to a short-lived signed R2 URL that carries
+ * `Content-Disposition: attachment`, so the browser downloads straight from R2. The bytes
+ * never pass through this function — Vercel caps function responses at 4.5 MB, which every
+ * 4K and many 2K PNGs exceed. `format=json` returns `{ url, filename }` instead of
+ * redirecting, so a caller can show the gate's error message rather than open a raw JSON tab.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -56,15 +79,14 @@ export async function GET(req: NextRequest) {
     const url = req.nextUrl.searchParams.get("url");
     const rawFilename = req.nextUrl.searchParams.get("filename") || "ad.png";
     const filename = rawFilename.replace(/[^a-z0-9._-]/gi, "_");
+    const wantsJson = req.nextUrl.searchParams.get("format") === "json";
 
     if (!url) {
       return NextResponse.json({ error: "url parameter is required" }, { status: 400 });
     }
 
     // Only allow R2 presigned URLs or R2 public URLs
-    const r2Public = process.env.R2_PUBLIC_URL || "";
-    const isR2 = url.includes("r2.cloudflarestorage.com") || url.includes("r2.dev") || (r2Public && url.startsWith(r2Public));
-    if (!isR2) {
+    if (!isR2Url(url)) {
       return NextResponse.json({ error: "Only R2 URLs are allowed" }, { status: 403 });
     }
 
@@ -77,21 +99,17 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const res = await fetch(url);
-    if (!res.ok) {
-      return NextResponse.json({ error: `Failed to fetch image: ${res.status}` }, { status: 502 });
+    const key = r2KeyFromStorageUrl(url);
+    // An R2 URL outside this bucket can't be signed — hand it back as-is (it opens rather
+    // than downloads, which beats failing).
+    const target = key
+      ? await getPresignedDownloadUrl(key, DOWNLOAD_URL_TTL_SECONDS, { attachmentFilename: filename })
+      : url;
+
+    if (wantsJson) {
+      return NextResponse.json({ url: target, filename });
     }
-
-    const contentType = res.headers.get("content-type") || "image/png";
-    const buffer = await res.arrayBuffer();
-
-    return new NextResponse(buffer, {
-      headers: {
-        "Content-Type": contentType,
-        "Content-Disposition": `attachment; filename="${filename}"`,
-        "Content-Length": String(buffer.byteLength),
-      },
-    });
+    return NextResponse.redirect(target, 302);
   } catch (err) {
     console.error("[static-ads/download]", err);
     return NextResponse.json(

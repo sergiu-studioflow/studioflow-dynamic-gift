@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Quote, Loader2, Check, X, Pencil, Download, Star, ImageIcon, AlertCircle, Save, Expand,
   Copy, Instagram, Facebook, RectangleVertical, Megaphone,
@@ -22,6 +22,7 @@ type Asset = {
 type Graphic = {
   id: string;
   status: string;
+  errorMessage: string | null;
   reviewerName: string | null;
   reviewText: string | null;
   stars: number | null;
@@ -35,10 +36,12 @@ type Graphic = {
 };
 
 const STATUS_TABS = [
-  { key: "draft", label: "Draft" },
-  { key: "approved", label: "Approved" },
-  { key: "rejected", label: "Rejected" },
-  { key: "all", label: "All" },
+  // Draft = awaiting a decision, including sets still generating or that failed,
+  // so a fresh Generate is visible (and polled) straight away.
+  { key: "draft", label: "Draft", query: "generating,draft,error" },
+  { key: "approved", label: "Approved", query: "approved" },
+  { key: "rejected", label: "Rejected", query: "rejected" },
+  { key: "all", label: "All", query: "all" },
 ];
 
 const FORMAT_META: Record<string, { label: string; icon: typeof Instagram; aspect: string }> = {
@@ -59,23 +62,41 @@ function downloadAsset(asset: Asset, graphic: Graphic) {
   a.remove();
 }
 
-export function ReviewGallery({ refreshTrigger }: { refreshTrigger: number }) {
-  const { clientId } = useClient();
+export function ReviewGallery({
+  refreshTrigger,
+  notice,
+  onDismissNotice,
+}: {
+  refreshTrigger: number;
+  notice?: string | null;
+  onDismissNotice?: () => void;
+}) {
+  const { clientId, isReady } = useClient();
   const [status, setStatus] = useState("draft");
   const [graphics, setGraphics] = useState<Graphic[]>([]);
   const [loading, setLoading] = useState(true);
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Bumped after every load attempt so polling re-arms even when a load fails.
+  const [loadCount, setLoadCount] = useState(0);
 
   const load = useCallback(async () => {
     if (!clientId) return;
+    const query = STATUS_TABS.find((t) => t.key === status)?.query ?? status;
     try {
-      const res = await fetch(`/api/review-graphics?clientId=${clientId}&status=${status}`);
+      const res = await fetch(`/api/review-graphics?clientId=${clientId}&status=${encodeURIComponent(query)}`);
       const data = await res.json();
-      if (Array.isArray(data)) setGraphics(data);
+      if (Array.isArray(data)) {
+        setGraphics(data);
+        setLoadError(null);
+      } else {
+        setLoadError(data?.error || "Couldn't load review graphics.");
+      }
     } catch (e) {
       console.error(e);
+      setLoadError("Couldn't load review graphics.");
     } finally {
       setLoading(false);
+      setLoadCount((n) => n + 1);
     }
   }, [clientId, status]);
 
@@ -85,18 +106,32 @@ export function ReviewGallery({ refreshTrigger }: { refreshTrigger: number }) {
   }, [load, refreshTrigger]);
 
   // Poll while anything is still generating
+  const inflight = graphics.some(
+    (g) => g.status === "generating" || g.assets.some((a) => a.status === "generating")
+  );
   useEffect(() => {
-    const inflight =
-      graphics.some((g) => g.status === "generating") ||
-      graphics.some((g) => g.assets.some((a) => a.status === "generating"));
-    if (pollRef.current) clearTimeout(pollRef.current);
-    if (inflight) {
-      pollRef.current = setTimeout(load, 5000);
-    }
-    return () => {
-      if (pollRef.current) clearTimeout(pollRef.current);
-    };
-  }, [graphics, load]);
+    if (!inflight) return;
+    const timer = setTimeout(load, 5000);
+    return () => clearTimeout(timer);
+  }, [inflight, loadCount, load]);
+
+  if (!isReady) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!clientId) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-20 text-muted-foreground/60">
+        <Quote className="mb-3 h-12 w-12" />
+        <p className="text-sm">Select a brand to see its review graphics</p>
+        <p className="text-[11px] text-muted-foreground/50">Use the client switcher in the sidebar — graphics are generated per brand.</p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -108,6 +143,19 @@ export function ReviewGallery({ refreshTrigger }: { refreshTrigger: number }) {
 
   return (
     <div className="space-y-6">
+      {notice && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-700 dark:text-amber-400">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="flex-1">{notice}</span>
+          {onDismissNotice && (
+            <button onClick={onDismissNotice} className="shrink-0 opacity-70 hover:opacity-100" title="Dismiss">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+      {loadError && <p className="text-xs text-red-600 dark:text-red-400">{loadError}</p>}
+
       {/* Status filter — segmented control */}
       <div className="flex items-center justify-between gap-3">
         <div className="inline-flex items-center gap-1 rounded-full border border-border bg-card/60 p-1">
@@ -137,7 +185,7 @@ export function ReviewGallery({ refreshTrigger }: { refreshTrigger: number }) {
         <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-20 text-muted-foreground/40">
           <Quote className="mb-3 h-12 w-12" />
           <p className="text-sm">No {status === "all" ? "" : status} review graphics yet</p>
-          <p className="text-[11px] text-muted-foreground/30">Generate some from the Reviews or Generate tab</p>
+          <p className="text-[11px] text-muted-foreground/30">Generate some from the Reviews tab</p>
         </div>
       ) : (
         <div className="space-y-6">
@@ -153,6 +201,7 @@ export function ReviewGallery({ refreshTrigger }: { refreshTrigger: number }) {
 function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () => void }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [form, setForm] = useState({
     pullQuote: graphic.pullQuote || "",
     instagramCaption: graphic.instagramCaption || "",
@@ -166,24 +215,36 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
   const completedImages = graphic.assets
     .filter((a) => a.status === "completed" && a.imageUrl)
     .map((a) => a.imageUrl as string);
-  const isGenerating = graphic.assets.some((a) => a.status === "generating");
+  const isGenerating = graphic.status === "generating" || graphic.assets.some((a) => a.status === "generating");
+  // Mirrors the API's approval gate: nothing still rendering, at least one finished image.
+  const canApprove = graphic.status !== "error" && !isGenerating && completedImages.length > 0;
 
-  async function act(body: object) {
+  async function act(body: object): Promise<boolean> {
     setBusy(true);
+    setActionError(null);
     try {
       const res = await fetch(`/api/review-graphics/${graphic.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (res.ok) onChanged();
+      if (res.ok) {
+        onChanged();
+        return true;
+      }
+      const data = await res.json().catch(() => ({}));
+      setActionError(data.error || `Couldn't save the change (HTTP ${res.status}).`);
+      return false;
+    } catch {
+      setActionError("Couldn't reach the server — try again.");
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
   async function saveCaptions() {
-    await act({
+    const saved = await act({
       captions: {
         pullQuote: form.pullQuote,
         instagramCaption: form.instagramCaption,
@@ -193,7 +254,7 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
         hashtags: form.hashtags.split(",").map((h) => h.trim()).filter(Boolean),
       },
     });
-    setEditing(false);
+    if (saved) setEditing(false);
   }
 
   const initial = (graphic.reviewerName || "?").trim().charAt(0).toUpperCase();
@@ -225,6 +286,12 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
         </div>
         <StatusPill status={graphic.status} />
       </header>
+
+      {graphic.status === "error" && (
+        <p className="border-b border-border/60 bg-red-500/5 px-5 py-2 text-[11px] text-red-600 dark:text-red-400">
+          {graphic.errorMessage || graphic.assets.find((a) => a.errorMessage)?.errorMessage || "Image generation failed."}
+        </p>
+      )}
 
       {/* Body */}
       <div className="grid gap-6 p-5 lg:grid-cols-[auto_minmax(0,1fr)]">
@@ -309,7 +376,7 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
       </div>
 
       {/* Footer actions */}
-      <footer className="flex items-center gap-2 border-t border-border/60 bg-background/40 px-5 py-3">
+      <footer className="flex flex-wrap items-center gap-2 border-t border-border/60 bg-background/40 px-5 py-3">
         {editing ? (
           <>
             <button
@@ -323,7 +390,7 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
           </>
         ) : (
           <>
-            {graphic.status !== "approved" && (
+            {graphic.status !== "approved" && canApprove && (
               <button
                 onClick={() => act({ action: "approve" })}
                 disabled={busy}
@@ -339,8 +406,14 @@ function GraphicCard({ graphic, onChanged }: { graphic: Graphic; onChanged: () =
             {graphic.status === "approved" && (
               <SendToQueueButton sourceType="review_graphic" sourceId={graphic.id} />
             )}
+            {graphic.status !== "approved" && !canApprove && (
+              <span className="text-[11px] text-muted-foreground">
+                {isGenerating ? "You can approve once the images finish." : "No finished images to approve."}
+              </span>
+            )}
           </>
         )}
+        {actionError && <span className="ml-auto text-[11px] text-red-600 dark:text-red-400">{actionError}</span>}
       </footer>
 
       {lightbox && <Lightbox images={lightbox.images} start={lightbox.start} onClose={() => setLightbox(null)} />}

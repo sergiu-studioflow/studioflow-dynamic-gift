@@ -16,6 +16,11 @@ const HEALTH: Record<string, { icon: typeof CheckCircle2; label: string; cls: st
   error: { icon: XCircle, label: "Error", cls: "text-destructive" },
 };
 
+async function errorFrom(res: Response, fallback: string): Promise<string> {
+  const data = await res.json().catch(() => ({}));
+  return (data as { error?: string }).error || fallback;
+}
+
 export function AccountsManager() {
   const { clientId, clientName, isAllClients } = useClient();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
@@ -23,6 +28,8 @@ export function AccountsManager() {
   const [busy, setBusy] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<PostingPrefs | null>(null);
   const [savingPrefs, setSavingPrefs] = useState(false);
+  const [prefsMessage, setPrefsMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [accountError, setAccountError] = useState("");
   const [discovered, setDiscovered] = useState<{ pageId: string; pageName: string; igUserId: string | null; igUsername: string | null }[] | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [discoverErr, setDiscoverErr] = useState("");
@@ -48,13 +55,17 @@ export function AccountsManager() {
     const externalId = (drafts[platform] ?? accountFor(platform)?.externalId ?? "").trim();
     if (!externalId) return;
     setBusy(platform);
+    setAccountError("");
     try {
-      await fetch("/api/posting/accounts", {
+      const res = await fetch("/api/posting/accounts", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ clientId, platform, externalId }),
       });
+      if (!res.ok) setAccountError(await errorFrom(res, "Could not save the account"));
       await load();
+    } catch {
+      setAccountError("Could not save the account — check your connection.");
     } finally {
       setBusy(null);
     }
@@ -62,13 +73,18 @@ export function AccountsManager() {
 
   async function test(id: string, platform: string) {
     setBusy(platform);
+    setAccountError("");
     try {
-      await fetch("/api/posting/accounts/test", {
+      // A failed connection test still answers 200 and records the reason on the account.
+      const res = await fetch("/api/posting/accounts/test", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id }),
       });
+      if (!res.ok) setAccountError(await errorFrom(res, "Connection test failed"));
       await load();
+    } catch {
+      setAccountError("Connection test failed — check your connection.");
     } finally {
       setBusy(null);
     }
@@ -76,13 +92,17 @@ export function AccountsManager() {
 
   async function toggle(id: string, enabled: boolean, platform: string) {
     setBusy(platform);
+    setAccountError("");
     try {
-      await fetch("/api/posting/accounts", {
+      const res = await fetch("/api/posting/accounts", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id, enabled }),
       });
+      if (!res.ok) setAccountError(await errorFrom(res, "Could not update the account"));
       await load();
+    } catch {
+      setAccountError("Could not update the account — check your connection.");
     } finally {
       setBusy(null);
     }
@@ -93,13 +113,15 @@ export function AccountsManager() {
     setDiscoverErr("");
     try {
       const res = await fetch("/api/posting/accounts/discover");
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setDiscoverErr(data.error || "Discovery failed");
         setDiscovered(null);
       } else {
         setDiscovered(data.pages || []);
       }
+    } catch {
+      setDiscoverErr("Discovery failed — check your connection.");
     } finally {
       setDiscovering(false);
     }
@@ -108,21 +130,26 @@ export function AccountsManager() {
   async function assignDiscovered(platform: "facebook" | "instagram", externalId: string) {
     if (!clientId) return;
     setBusy(platform);
+    setAccountError("");
     try {
       const res = await fetch("/api/posting/accounts", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ clientId, platform, externalId }),
       });
-      const acct = await res.json();
+      const acct = await res.json().catch(() => ({}));
       if (res.ok && acct?.id) {
         await fetch("/api/posting/accounts/test", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ id: acct.id }),
         });
+      } else {
+        setAccountError(acct?.error || "Could not assign the account");
       }
       await load();
+    } catch {
+      setAccountError("Could not assign the account — check your connection.");
     } finally {
       setBusy(null);
     }
@@ -131,13 +158,22 @@ export function AccountsManager() {
   async function savePrefs() {
     if (!clientId || !prefs) return;
     setSavingPrefs(true);
+    setPrefsMessage(null);
     try {
-      await fetch("/api/posting/prefs", {
+      const res = await fetch("/api/posting/prefs", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ clientId, prefs }),
       });
+      if (!res.ok) {
+        // Keep the user's edits on screen so the bad value can be corrected.
+        setPrefsMessage({ ok: false, text: await errorFrom(res, "Schedule not saved") });
+        return;
+      }
+      setPrefsMessage({ ok: true, text: "Schedule saved." });
       await load();
+    } catch {
+      setPrefsMessage({ ok: false, text: "Schedule not saved — check your connection." });
     } finally {
       setSavingPrefs(false);
     }
@@ -162,6 +198,7 @@ export function AccountsManager() {
         </p>
 
         {discoverErr && <p className="mb-3 text-xs text-destructive">{discoverErr}</p>}
+        {accountError && <p className="mb-3 text-xs text-destructive">{accountError}</p>}
         {discovered && (
           <div className="mb-4 rounded-xl border border-border bg-muted/20 p-3">
             <div className="mb-2 flex items-center justify-between">
@@ -288,10 +325,15 @@ export function AccountsManager() {
                 className="mt-1 w-24 rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
               />
             </label>
-            <Button size="sm" onClick={savePrefs} disabled={savingPrefs}>
-              {savingPrefs ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1 h-3.5 w-3.5" />}
-              Save schedule
-            </Button>
+            <div className="flex items-center gap-3">
+              <Button size="sm" onClick={savePrefs} disabled={savingPrefs}>
+                {savingPrefs ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1 h-3.5 w-3.5" />}
+                Save schedule
+              </Button>
+              {prefsMessage && (
+                <span className={`text-xs ${prefsMessage.ok ? "text-emerald-500" : "text-destructive"}`}>{prefsMessage.text}</span>
+              )}
+            </div>
           </div>
         </div>
       )}

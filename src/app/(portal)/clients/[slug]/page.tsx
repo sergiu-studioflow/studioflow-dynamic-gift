@@ -8,6 +8,7 @@ import { cn, formatDate } from "@/lib/utils";
 import { ClientBrandIntelEditor } from "@/components/clients/client-brand-intel-editor";
 import { ClientProductsTable } from "@/components/clients/client-products-table";
 import { ClientStaticAdPrompts } from "@/components/clients/client-static-ad-prompts";
+import { usePortalRole } from "@/components/clients/portal-role";
 import type { Client } from "@/lib/types";
 
 type Tab = "overview" | "brand-intel" | "products" | "ad-prompts";
@@ -22,16 +23,30 @@ const TABS: { key: Tab; label: string; icon: React.ElementType }[] = [
 export default function ClientDetailPage() {
   const params = useParams();
   const slug = params.slug as string;
-  const [client, setClient] = useState<Client | null>(null);
+  const canManagePrompts = usePortalRole() === "admin";
+  // Keyed by the slug it was fetched for, so a different brand's URL never shows the
+  // previous brand while its own record loads.
+  const [loaded, setLoaded] = useState<{ slug: string; client: Client | null } | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     fetch(`/api/clients/${slug}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then(setClient)
-      .finally(() => setLoading(false));
+      .then((data: Client | null) => {
+        // A 401/403/404 body carries no brand; treat anything without a name as not found.
+        if (!cancelled) setLoaded({ slug, client: data && typeof data.clientName === "string" ? data : null });
+      })
+      .catch(() => {
+        if (!cancelled) setLoaded({ slug, client: null });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [slug]);
+
+  const loading = loaded?.slug !== slug;
+  const client = loaded?.slug === slug ? loaded.client : null;
 
   if (loading) {
     return (
@@ -102,10 +117,13 @@ export default function ClientDetailPage() {
       </div>
 
       {/* Tab Content */}
+      {/* Keyed by brand so edits, selections and uploads never carry over to another brand. */}
       {tab === "overview" && <OverviewTab client={client} />}
-      {tab === "brand-intel" && <ClientBrandIntelEditor clientSlug={slug} />}
-      {tab === "products" && <ClientProductsTable clientSlug={slug} />}
-      {tab === "ad-prompts" && <ClientStaticAdPrompts clientSlug={slug} />}
+      {tab === "brand-intel" && <ClientBrandIntelEditor key={slug} clientSlug={slug} />}
+      {tab === "products" && <ClientProductsTable key={slug} clientSlug={slug} clientId={client.id} />}
+      {tab === "ad-prompts" && (
+        <ClientStaticAdPrompts key={slug} clientSlug={slug} canManage={canManagePrompts} />
+      )}
     </div>
   );
 }

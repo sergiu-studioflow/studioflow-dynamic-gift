@@ -25,7 +25,11 @@ import {
   Film,
   Zap,
 } from "lucide-react";
+import { QcBadge } from "@/components/qc/review-scorecard";
 import type { GeneratedVideoBrief, HookVariation } from "@/lib/types";
+
+/** A brief as GET /api/video-brief/[id] returns it, including its Quality Control state. */
+export type BriefRow = GeneratedVideoBrief & { qcStatus?: string | null; qcReviewId?: string | null };
 
 const PLATFORM_STYLES: Record<string, { label: string; className: string }> = {
   Facebook: { label: "Facebook", className: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
@@ -48,7 +52,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 type VideoBriefCardProps = {
-  brief: GeneratedVideoBrief;
+  brief: BriefRow;
   onStatusChange: (briefId: string, newStatus: string) => void;
 };
 
@@ -75,7 +79,10 @@ export function VideoBriefCard({ brief, onStatusChange }: VideoBriefCardProps) {
     ? PLATFORM_STYLES[brief.platform] || { label: brief.platform, className: "bg-muted text-muted-foreground" }
     : null;
 
-  const hookVariations = (brief.hookVariations || []) as HookVariation[];
+  // jsonb from n8n — only render it as a list when it really is one.
+  const hookVariations = (Array.isArray(brief.hookVariations) ? brief.hookVariations : []).filter(
+    (h): h is HookVariation => !!h && typeof h === "object"
+  );
 
   return (
     <Card
@@ -108,6 +115,8 @@ export function VideoBriefCard({ brief, onStatusChange }: VideoBriefCardProps) {
                 {brief.contentType}
               </Badge>
             )}
+            {/* "QC…" only for briefs actually queued for grading — older ones never were. */}
+            <QcBadge qcStatus={brief.qcStatus === "pending" && !brief.qcReviewId ? null : brief.qcStatus} />
           </div>
           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
             <Select

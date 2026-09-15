@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { ImageIcon, Video, ChevronDown, ChevronRight, RefreshCw, SkipForward, Loader2, CheckCircle2, AlertTriangle, Clock, ExternalLink } from "lucide-react";
+import { ImageIcon, Video, ChevronDown, ChevronRight, RefreshCw, SkipForward, Loader2, CheckCircle2, AlertTriangle, Clock, ExternalLink, RotateCcw, CalendarDays } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import type { PlanItem } from "./types";
 
-const ITEM_STATUS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success" }> = {
+type Variant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning";
+
+const ITEM_STATUS: Record<string, { label: string; variant: Variant }> = {
   planned: { label: "Planned", variant: "outline" },
   briefing: { label: "Briefing…", variant: "secondary" },
   brief_ready: { label: "Brief ready", variant: "default" },
@@ -18,33 +19,115 @@ const ITEM_STATUS: Record<string, { label: string; variant: "default" | "seconda
   skipped: { label: "Skipped", variant: "outline" },
 };
 
-export function PlanItemCard({ item, planId, editable, onChanged }: { item: PlanItem; planId: string; editable: boolean; onChanged: () => void }) {
+/** What happened to the post after the slot was scheduled (it can be changed in the Post Scheduler). */
+const POST_STATUS: Record<string, { label: string; variant: Variant }> = {
+  draft: { label: "Unscheduled", variant: "warning" },
+  publishing: { label: "Publishing…", variant: "secondary" },
+  published: { label: "Published", variant: "success" },
+  partial: { label: "Partly published", variant: "warning" },
+  failed: { label: "Publish failed", variant: "destructive" },
+  cancelled: { label: "Post cancelled", variant: "outline" },
+};
+
+/** Matches the API: a slot left 'briefing' this long can be retried. */
+const BRIEFING_STALE_MS = 10 * 60_000;
+
+/** "Tue 4 Nov" for a YYYY-MM-DD plan date — a calendar date, so formatted in UTC to never shift a day. */
+function fmtPlanDate(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  if (isNaN(d.getTime())) return date;
+  return new Intl.DateTimeFormat("en-AU", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).format(d);
+}
+
+function fmtScheduled(iso: string, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-AU", {
+      timeZone: tz,
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).format(new Date(iso));
+  } catch {
+    return new Date(iso).toLocaleString();
+  }
+}
+
+function statusFor(item: PlanItem): { label: string; variant: Variant } {
+  if (item.status === "producing" && (item.generationStatus === "completed" || item.generationStatus === "complete")) {
+    return item.qcStatus === "pending" ? { label: "Awaiting QC", variant: "warning" } : { label: "Scheduling…", variant: "secondary" };
+  }
+  if (item.status === "scheduled" && item.post && POST_STATUS[item.post.status]) return POST_STATUS[item.post.status];
+  if (item.status === "generated" && item.assetType === "video") return { label: "Brief delivered", variant: "success" };
+  return ITEM_STATUS[item.status] || ITEM_STATUS.planned;
+}
+
+export function PlanItemCard({
+  item,
+  planId,
+  editable,
+  now,
+  onChanged,
+}: {
+  item: PlanItem;
+  planId: string;
+  editable: boolean;
+  /** When the plan was loaded (ms) — keeps render pure. */
+  now: number;
+  onChanged: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
   const [payload, setPayload] = useState<Record<string, unknown>>(item.brief?.payload || {});
-  const s = ITEM_STATUS[item.status] || ITEM_STATUS.planned;
+  const s = statusFor(item);
 
   async function patch(action: string, extra: Record<string, unknown> = {}) {
     setBusy(true);
+    setActionError("");
     try {
-      await fetch(`/api/monthly-planning/plans/${planId}/items/${item.id}`, {
+      const res = await fetch(`/api/monthly-planning/plans/${planId}/items/${item.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action, ...extra }),
       });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setActionError(d.error || "That didn't work — try again.");
+      }
       onChanged();
+    } catch {
+      setActionError("Couldn't reach the server — try again.");
     } finally {
       setBusy(false);
     }
   }
 
+  function retry() {
+    const held = item.errorMessage?.startsWith("Held by Quality Control");
+    if (held && !confirm("This ad is held by Quality Control — to use it as-is, approve it in the QC queue instead. Produce a new ad for this slot?")) {
+      return;
+    }
+    patch("retry");
+  }
+
   const briefEditable = editable && item.brief && !["producing", "generated", "scheduled"].includes(item.status);
+  const staleBriefing = item.status === "briefing" && now - new Date(item.updatedAt).getTime() > BRIEFING_STALE_MS;
+  // Left 'generated' by the old QC release path: the ad exists but was never scheduled.
+  const strandedStatic = item.status === "generated" && item.assetType === "static" && !!item.generationId;
+  const canRetry = item.status === "error" || staleBriefing || strandedStatic;
+  const canSkip = (editable || item.status === "error") && !["scheduled", "skipped"].includes(item.status);
 
   return (
     <div className="rounded-lg border border-border bg-card">
       <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-3 py-2 text-left">
         {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
         {item.assetType === "static" ? <ImageIcon className="h-3.5 w-3.5 shrink-0" /> : <Video className="h-3.5 w-3.5 shrink-0" />}
+        <span className="flex shrink-0 items-center gap-1 text-[10px] tabular-nums text-muted-foreground">
+          <CalendarDays className="h-3 w-3" /> {fmtPlanDate(item.plannedDate)}
+        </span>
         <span className="truncate text-xs font-medium">{item.title || item.topic || "Post"}</span>
         <Badge variant="outline" className="text-[9px] uppercase">{item.format}</Badge>
         {item.angleTag && <Badge variant="outline" className="hidden text-[9px] sm:inline-flex">{item.angleTag}</Badge>}
@@ -57,6 +140,12 @@ export function PlanItemCard({ item, planId, editable, onChanged }: { item: Plan
 
       {open && (
         <div className="space-y-3 border-t border-border/60 px-3 py-3">
+          {item.status === "scheduled" && item.post?.scheduledAt && (
+            <p className="text-[11px] text-muted-foreground">
+              <span className="font-medium text-foreground">Posting:</span> {fmtScheduled(item.post.scheduledAt, item.post.timezone)}
+              {item.post.status !== "scheduled" && ` (${s.label.toLowerCase()})`}
+            </p>
+          )}
           {item.topic && <p className="text-[11px] text-muted-foreground"><span className="font-medium text-foreground">Topic:</span> {item.topic}</p>}
           {item.direction && <p className="text-[11px] text-muted-foreground"><span className="font-medium text-foreground">Direction:</span> {item.direction}</p>}
           {item.errorMessage && <p className="text-[11px] text-destructive">{item.errorMessage}</p>}
@@ -85,22 +174,28 @@ export function PlanItemCard({ item, planId, editable, onChanged }: { item: Plan
             </div>
           )}
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {canRetry && (
+              <Button size="sm" variant="outline" className="h-6 text-[11px]" onClick={retry} disabled={busy}>
+                {busy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RotateCcw className="mr-1 h-3 w-3" />} Retry
+              </Button>
+            )}
             {briefEditable && (
               <Button size="sm" variant="outline" className="h-6 text-[11px]" onClick={() => patch("regenerate_brief")} disabled={busy}>
                 {busy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1 h-3 w-3" />} Regenerate brief
               </Button>
             )}
-            {editable && !["scheduled", "skipped"].includes(item.status) && (
+            {canSkip && (
               <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => patch("skip")} disabled={busy}>
                 <SkipForward className="mr-1 h-3 w-3" /> Skip
               </Button>
             )}
-            {item.status === "scheduled" && (
+            {item.scheduledPostId && (
               <a href="/posting" className="flex items-center gap-1 text-[11px] text-primary hover:underline">
                 In Post Scheduler <ExternalLink className="h-3 w-3" />
               </a>
             )}
+            {actionError && <span className="text-[11px] text-destructive">{actionError}</span>}
           </div>
         </div>
       )}

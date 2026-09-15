@@ -6,6 +6,7 @@ import { Target, Music, Instagram, LayoutGrid, Users } from "lucide-react";
 import { useClient } from "@/lib/client-context";
 import { CompetitorManagementTab } from "@/components/competitor-ads/competitor-management-tab";
 import { AdLibraryTab } from "@/components/competitor-ads/ad-library-tab";
+import { DEFAULT_META_AD_COUNTRY } from "@/components/competitor-ads/countries";
 
 import { ProfileManagement } from "@/components/organic-content/profile-management";
 import { PostGallery } from "@/components/organic-content/post-gallery";
@@ -17,7 +18,6 @@ type ClientCompetitor = {
   tiktokHandle: string | null;
   instagramHandle: string | null;
   websiteUrl: string | null;
-  country: string | null;
   isActive: boolean;
 };
 
@@ -40,9 +40,20 @@ export default function CompetitorResearchPage() {
     }
   }, [clientSlug, isReady]);
 
+  // Initial / brand-change load. Ignores a late response for the previous brand.
   useEffect(() => {
-    loadCompetitors();
-  }, [loadCompetitors]);
+    if (!isReady || !clientSlug) return;
+    let cancelled = false;
+    fetch(`/api/clients/${clientSlug}/competitors`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled && Array.isArray(data)) setCompetitors(data);
+      })
+      .catch((err) => console.error("Failed to load competitors:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [clientSlug, isReady]);
 
   // Map clientCompetitors to the source format AdLibraryTab expects
   const metaSources = competitors
@@ -51,24 +62,44 @@ export default function CompetitorResearchPage() {
       id: c.id,
       name: c.competitorName,
       competitorPageId: c.metaPageId!,
-      metaLibraryUrl: `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=${c.country || "GB"}&view_all_page_id=${c.metaPageId}&search_type=page&media_type=all`,
-      country: c.country || "GB",
+      metaLibraryUrl: `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=${DEFAULT_META_AD_COUNTRY}&view_all_page_id=${c.metaPageId}&search_type=page&media_type=all`,
+      country: DEFAULT_META_AD_COUNTRY,
       isActive: c.isActive,
       lastScrapedAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     }));
 
+  const header = (
+    <div>
+      <h1 className="text-4xl font-bold tracking-tight text-foreground">
+        Competitor Research System
+      </h1>
+      <p className="mt-2 text-base text-muted-foreground">
+        Track and analyze competitor content across Meta, TikTok, and Instagram.
+      </p>
+    </div>
+  );
+
+  // Competitors, scrapes and briefs are all per brand — "All Clients" has nothing to show.
+  if (isReady && !clientId) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-20 text-center">
+          <Users className="mb-3 h-10 w-10 text-muted-foreground/40" />
+          <p className="text-lg font-medium text-muted-foreground">Select a brand</p>
+          <p className="mt-1 text-sm text-muted-foreground/60">
+            Use the client switcher in the sidebar to view that brand&apos;s competitor research.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-4xl font-bold tracking-tight text-foreground">
-          Competitor Research System
-        </h1>
-        <p className="mt-2 text-base text-muted-foreground">
-          Track and analyze competitor content across Meta, TikTok, and Instagram.
-        </p>
-      </div>
+      {header}
 
       <Tabs defaultValue="meta-ads" className="w-full">
         <TabsList className="grid w-full max-w-2xl grid-cols-3">

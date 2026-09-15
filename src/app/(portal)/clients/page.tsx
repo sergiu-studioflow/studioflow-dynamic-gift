@@ -2,18 +2,27 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Building2, Plus, Globe, MapPin } from "lucide-react";
+import { Plus, Globe, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Client } from "@/lib/types";
+import { usePortalRole } from "@/components/clients/portal-role";
 
 export default function ClientsPage() {
+  // POST /api/clients is admin-only; don't offer members a wizard that ends in a 403.
+  const canAddClients = usePortalRole() === "admin";
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     fetch("/api/clients")
-      .then((r) => r.json())
-      .then(setClients)
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(data?.error || `Couldn't load clients (${r.status}).`);
+        // An error body is an object, not a list — never hand it to the grid.
+        setClients(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Couldn't load clients."))
       .finally(() => setLoading(false));
   }, []);
 
@@ -47,27 +56,39 @@ export default function ClientsPage() {
             {pausedClients.length > 0 && ` · ${pausedClients.length} paused`}
           </p>
         </div>
-        <Link
-          href="/clients/new"
-          className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand-primary,#23c3e8)] px-4 py-2 text-sm font-medium text-black transition-opacity hover:opacity-90"
-        >
-          <Plus className="h-4 w-4" />
-          Add Client
-        </Link>
+        {canAddClients ? (
+          <Link
+            href="/clients/new"
+            className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand-primary,#23c3e8)] px-4 py-2 text-sm font-medium text-black transition-opacity hover:opacity-90"
+          >
+            <Plus className="h-4 w-4" />
+            Add Client
+          </Link>
+        ) : (
+          <p className="text-xs text-muted-foreground">Only admins can add clients.</p>
+        )}
       </div>
+
+      {loadError && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">
+          {loadError}
+        </p>
+      )}
 
       {/* Client Grid */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {/* Add Client CTA card */}
-        <Link
-          href="/clients/new"
-          className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-border/50 bg-card/30 p-8 transition-all hover:border-border hover:bg-card/50"
-        >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-            <Plus className="h-5 w-5 text-muted-foreground" />
-          </div>
-          <span className="text-sm font-medium text-muted-foreground">Add New Client</span>
-        </Link>
+        {canAddClients && (
+          <Link
+            href="/clients/new"
+            className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-border/50 bg-card/30 p-8 transition-all hover:border-border hover:bg-card/50"
+          >
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+              <Plus className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <span className="text-sm font-medium text-muted-foreground">Add New Client</span>
+          </Link>
+        )}
 
         {/* Active clients */}
         {activeClients.map((client) => (

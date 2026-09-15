@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink, ChevronLeft, ChevronRight, X, AlertCircle, Trophy, Loader2, CheckCircle2, FileText } from "lucide-react";
 import { useClient } from "@/lib/client-context";
 import type { CompetitorAd } from "./types";
 import { computeBadge, parseIsoDateUTC, parseMedia } from "./utils";
+import { useSourceBrief } from "./use-source-brief";
 
 export function FullViewModal({
   ad,
@@ -20,8 +22,7 @@ export function FullViewModal({
   const [mediaError, setMediaError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [briefing, setBriefing] = useState(false);
-  const [briefId, setBriefId] = useState<string | null>(null);
+  const sourceBrief = useSourceBrief("competitor_ad", ad.id, clientId);
 
   // Reset saved state when switching carousel cards
   useEffect(() => { setSaved(false); }, [cardIndex]);
@@ -89,30 +90,6 @@ export function FullViewModal({
       // silently fail
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleGenerateBrief() {
-    if (briefing || briefId) return;
-    setBriefing(true);
-    try {
-      const res = await fetch("/api/research-briefs/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceType: "competitor_ad",
-          sourceId: ad.id,
-          clientId,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setBriefId(data.id);
-      }
-    } catch {
-      // silently fail
-    } finally {
-      setBriefing(false);
     }
   }
 
@@ -395,27 +372,30 @@ export function FullViewModal({
                     {saved ? "Saved!" : "Save to Winners"}
                   </button>
                 )}
-                {briefId ? (
-                  <a
-                    href="/research-briefs"
+                {sourceBrief.briefId ? (
+                  <Link
+                    href={`/research-briefs/${sourceBrief.briefId}`}
                     className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-green-500/10 text-green-500 hover:bg-green-500/20 transition-colors"
                   >
                     <CheckCircle2 className="h-3 w-3" />
                     View Brief
-                  </a>
+                  </Link>
                 ) : (
                   <button
-                    onClick={handleGenerateBrief}
-                    disabled={briefing}
+                    onClick={sourceBrief.generate}
+                    disabled={sourceBrief.generating || sourceBrief.checking}
                     className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors disabled:opacity-60"
                   >
-                    {briefing ? (
+                    {sourceBrief.generating || sourceBrief.checking ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
                     ) : (
                       <FileText className="h-3 w-3" />
                     )}
-                    {briefing ? "Generating..." : "Generate Brief"}
+                    {sourceBrief.generating ? "Generating..." : "Generate Brief"}
                   </button>
+                )}
+                {sourceBrief.error && (
+                  <p className="w-full text-xs text-red-500">{sourceBrief.error}</p>
                 )}
               </div>
             </div>

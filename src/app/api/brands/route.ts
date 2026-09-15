@@ -1,6 +1,8 @@
 import { db, schema } from "@/lib/db";
 import { requireAuth, isAuthError } from "@/lib/auth";
+import { provisionClient } from "@/lib/client-provisioning";
 import type { BrandOption } from "@/lib/types";
+import { slugify } from "@/lib/utils";
 import { eq, asc } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod/v4";
@@ -26,13 +28,14 @@ const createBrandSchema = z.object({
   name: z.string().min(1).max(200),
 });
 
-// POST — add a new brand (admin only)
+// POST — add a new brand (admin only). Provisioned exactly like Clients → Add Client:
+// a bare row had no slug or storage prefix, so every brand-scoped system broke on it.
 export async function POST(request: NextRequest) {
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
 
-  if (auth.portalUser.role === "viewer") {
-    return NextResponse.json({ error: "Insufficient permissions" }, { status: 403 });
+  if (auth.portalUser.role !== "admin") {
+    return NextResponse.json({ error: "Admin access required" }, { status: 403 });
   }
 
   const body = await request.json();
@@ -41,27 +44,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid input", details: parsed.error.format() }, { status: 400 });
   }
 
-  // Get max sort order for new brand
-  const existing = await db
-    .select({ sortOrder: schema.brands.sortOrder })
+  const name = parsed.data.name.trim();
+  const clientSlug = slugify(name);
+  if (!clientSlug) {
+    return NextResponse.json({ error: "Brand name must contain letters or numbers" }, { status: 400 });
+  }
+
+  const [existing] = await db
+    .select({ id: schema.brands.id })
     .from(schema.brands)
-    .orderBy(asc(schema.brands.sortOrder));
-  const nextOrder = existing.length > 0 ? Math.max(...existing.map((r) => r.sortOrder)) + 1 : 0;
+    .where(eq(schema.brands.clientSlug, clientSlug))
+    .limit(1);
+  if (existing) {
+    return NextResponse.json({ error: `A brand with the slug "${clientSlug}" already exists` }, { status: 409 });
+  }
 
   try {
-    const [brand] = await db
-      .insert(schema.brands)
-      .values({ brandName: parsed.data.name.trim(), sortOrder: nextOrder })
-      .returning();
-
-    await db.insert(schema.activityLog).values({
-      userId: auth.portalUser.id,
-      action: "brand_created",
-      resourceType: "brand",
-      resourceId: brand.id,
-      details: { name: brand.brandName },
-    });
-
+    const brand = await provisionClient({ clientName: name, clientSlug }, auth.portalUser.id);
     return NextResponse.json(brand, { status: 201 });
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes("unique")) {

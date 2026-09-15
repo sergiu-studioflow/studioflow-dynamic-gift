@@ -47,7 +47,13 @@ function GenerationItem({
         <p className="text-xs font-semibold text-foreground truncate">
           {gen.productName || label}
         </p>
-        <p className="text-[10px] text-muted-foreground truncate">
+        <p
+          className={cn(
+            "text-[10px] text-muted-foreground",
+            gen.status === "error" ? "line-clamp-3 break-words" : "truncate"
+          )}
+          title={gen.status === "error" ? gen.errorMessage : undefined}
+        >
           {gen.status === "completed"
             ? "Video ready"
             : gen.status === "error"

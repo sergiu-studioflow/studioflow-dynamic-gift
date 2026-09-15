@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
-import { desc, eq, and, notInArray, isNotNull, sql } from "drizzle-orm";
+import { desc, eq, and, gt, inArray, notInArray, isNotNull, sql } from "drizzle-orm";
 import { toAccessibleUrl } from "@/lib/r2";
 import { sweepGeneratingRows } from "@/lib/static-ads/poll-and-persist";
 import { qcFilterCondition } from "@/lib/qc/gate";
@@ -11,6 +11,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type Row = typeof schema.staticAdGenerations.$inferSelect;
+
+/** How recent a pending / generating row must be to count as still rendering. */
+const IN_FLIGHT_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
   try {
@@ -25,12 +28,10 @@ export async function GET(req: NextRequest) {
     const offset = parseInt(req.nextUrl.searchParams.get("offset") || "0");
 
     // Resolve any rows stuck on 'generating' because the user closed the
-    // generator tab while Kie was still processing. Frontend per-tile
-    // polling lives only in unified-generator; without this sweep, stuck
-    // rows sit forever (observed 28h on DNA portal). Sweep advances
-    // intermediates / logo-refined with their own kieJobId; refined rows
-    // waiting on a source (kieJobId=NULL) are still progressed by
-    // GET /generate/[id].
+    // generator tab while Kie was still processing, and fire the next chain
+    // step (logo swap / product swap) for refined rows whose source finished.
+    // Frontend per-tile polling lives only in unified-generator; without this
+    // sweep, stuck rows sit forever (observed 28h on DNA portal).
     await sweepGeneratingRows({ clientId });
 
     const conditions = [];
@@ -92,7 +93,23 @@ export async function GET(req: NextRequest) {
       }))
     );
 
-    return NextResponse.json(withAccessibleUrls);
+    // Recent rows still rendering (incl. hidden chain steps). The default view shows only
+    // finished ads, so the UI uses this to keep refreshing — each refresh re-runs the sweep
+    // that advances those chains — until the finals land.
+    const [inFlight] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.staticAdGenerations)
+      .where(
+        and(
+          clientId ? eq(schema.staticAdGenerations.clientId, clientId) : undefined,
+          inArray(schema.staticAdGenerations.status, ["pending", "generating"]),
+          gt(schema.staticAdGenerations.createdAt, new Date(Date.now() - IN_FLIGHT_WINDOW_MS))
+        )
+      );
+
+    return NextResponse.json(withAccessibleUrls, {
+      headers: { "x-in-flight-count": String(inFlight?.count ?? 0) },
+    });
   } catch (err) {
     console.error("[static-ads/gallery]", err);
     return NextResponse.json(

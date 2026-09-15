@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -20,7 +19,7 @@ import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ClientSwitcher } from "@/components/layout/client-switcher";
 import { Users, Clapperboard, Target, FileText, Quote, Send, CalendarRange, ShieldCheck } from "lucide-react";
-import { useClient } from "@/lib/client-context";
+import { useClientCapabilities } from "@/components/layout/use-client-capabilities";
 
 /**
  * System visibility is derived from each brand's data via
@@ -30,17 +29,6 @@ import { useClient } from "@/lib/client-context";
  * added themselves stayed invisible to every system until someone edited this
  * file and redeployed. Onboarding is now self-serve.
  */
-type Capabilities = {
-  staticAds: boolean;
-  video: boolean;
-  research: boolean;
-  briefs: boolean;
-  reviews: boolean;
-  posting: boolean;
-  monthlyPlanning: boolean;
-  qualityControl: boolean;
-};
-
 const baseNavigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Brand Intelligence", href: "/brand-intelligence", icon: Brain },
@@ -54,31 +42,15 @@ type PortalSidebarProps = {
   brandColor?: string;
   features?: Record<string, boolean>;
   userEmail?: string;
+  role: string;
 };
 
-export function PortalSidebar({ brandName, features, userEmail }: PortalSidebarProps) {
+export function PortalSidebar({ brandName, features, userEmail, role }: PortalSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { clientSlug } = useClient();
-
-  const [caps, setCaps] = useState<Capabilities | null>(null);
-
-  useEffect(() => {
-    if (!clientSlug) return;
-    let cancelled = false;
-    // Null until this resolves, so the nav shows only the always-available
-    // systems for a moment rather than flashing items that then vanish.
-    setCaps(null);
-    fetch(`/api/clients/${clientSlug}/capabilities`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: Capabilities | null) => {
-        if (!cancelled && d) setCaps(d);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [clientSlug]);
+  // Null while loading and when no brand is selected, so the nav shows only the
+  // always-available systems rather than another brand's.
+  const caps = useClientCapabilities();
 
   const navigation = [
     ...baseNavigation,
@@ -123,7 +95,7 @@ export function PortalSidebar({ brandName, features, userEmail }: PortalSidebarP
       <div className="mx-5 h-px bg-white/10" />
 
       {/* Client Switcher (standardized multi-client module) */}
-      {features?.multi_client && <ClientSwitcher />}
+      {features?.multi_client && <ClientSwitcher canAddClients={role === "admin"} />}
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">

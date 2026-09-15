@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { BrandSelect } from "@/components/shared/brand-select";
+import { useClient } from "@/lib/client-context";
 import { Loader2, Megaphone } from "lucide-react";
 
 const CAMPAIGN_OBJECTIVES = [
@@ -30,10 +31,10 @@ const TARGET_PERSONAS = [
 ] as const;
 
 const CORE_ANGLES = [
-  { value: "Speed & Turnaround", label: "Speed & Turnaround", desc: "Fastest in Australia" },
+  { value: "Speed & Turnaround", label: "Speed & Turnaround", desc: "Turnaround and deadline certainty" },
   { value: "Full-Service Concierge", label: "Full-Service Concierge", desc: "We handle everything" },
-  { value: "Price Competitiveness", label: "Price Competitiveness", desc: "Direct importing, no middlemen" },
-  { value: "Proof Points & Credibility", label: "Proof Points & Credibility", desc: "2,000+ reviews, major brand clients" },
+  { value: "Price Competitiveness", label: "Price Competitiveness", desc: "Value and pricing advantages" },
+  { value: "Proof Points & Credibility", label: "Proof Points & Credibility", desc: "Reviews, clients and track record" },
   { value: "Objection Handling", label: "Objection Handling", desc: "Pre-empt buyer hesitations" },
   { value: "100% Bespoke", label: "100% Bespoke", desc: "Custom-designed from the ground up" },
 ] as const;
@@ -53,6 +54,7 @@ type AdCopyFormProps = {
 };
 
 export function AdCopyForm({ onSuccess }: AdCopyFormProps) {
+  const { clientId } = useClient();
   const [brand, setBrand] = useState("");
   const [campaignObjective, setCampaignObjective] = useState("");
   const [targetPersona, setTargetPersona] = useState("");
@@ -123,6 +125,15 @@ export function AdCopyForm({ onSuccess }: AdCopyFormProps) {
         throw new Error(data.error || "Failed to create request");
       }
 
+      // The request is saved even when generation couldn't be started; say so instead of
+      // announcing a run that isn't happening. It can be retried from the Copy Library.
+      const created = await res.json().catch(() => null);
+      if (created?.status === "error") {
+        throw new Error(
+          `${created.errorMessage || "Generation could not be started."} The request was saved — retry it from the Copy Library.`
+        );
+      }
+
       setSuccess(true);
       setBrand("");
       setCampaignObjective("");
@@ -150,7 +161,7 @@ export function AdCopyForm({ onSuccess }: AdCopyFormProps) {
         {/* Brand Selection */}
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">Brand *</label>
-          <BrandSelect value={brand} onValueChange={setBrand} />
+          <BrandSelect value={brand} onValueChange={setBrand} preselectId={clientId} />
         </div>
 
         {/* Campaign Objective & Target Persona */}

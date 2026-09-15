@@ -86,20 +86,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Only PNG, JPEG, and WebP images allowed" }, { status: 400 });
   }
 
-  const ext = file.name.split(".").pop() || "jpeg";
-  // Brand-owned references live under that brand's own R2 prefix; only the
-  // agency-wide pool goes in shared/.
-  const clientPrefix = clientId ? await getClientStoragePrefix(clientId) : null;
-  const key = clientId && clientPrefix
-    ? `${clientPrefix}/reference-library/${uuid()}.${ext}`
-    : `shared/reference-ad-library/${slugify(industry)}/${uuid()}.${ext}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const imageUrl = await uploadToR2(key, buffer, file.type);
+  try {
+    const ext = file.name.split(".").pop() || "jpeg";
+    // Brand-owned references live under that brand's own R2 prefix; only the
+    // agency-wide pool goes in shared/.
+    const clientPrefix = clientId ? await getClientStoragePrefix(clientId) : null;
+    const key = clientId && clientPrefix
+      ? `${clientPrefix}/reference-library/${uuid()}.${ext}`
+      : `shared/reference-ad-library/${slugify(industry)}/${uuid()}.${ext}`;
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const imageUrl = await uploadToR2(key, buffer, file.type);
 
-  const [ref] = await db
-    .insert(schema.referenceAdLibrary)
-    .values({ name, imageUrl, industry, adType, brand, tags, clientId })
-    .returning();
+    const [ref] = await db
+      .insert(schema.referenceAdLibrary)
+      .values({ name, imageUrl, industry, adType, brand, tags, clientId })
+      .returning();
 
-  return NextResponse.json(ref, { status: 201 });
+    return NextResponse.json(ref, { status: 201 });
+  } catch (err) {
+    console.error("[reference-library/POST]", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Upload failed" },
+      { status: 500 }
+    );
+  }
 }

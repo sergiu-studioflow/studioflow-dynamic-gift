@@ -45,7 +45,13 @@ export default function StaticAdsPage() {
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data)) {
-          setProducts(data.map((p: any) => ({ id: p.id, name: p.productName, imageUrl: p.imageUrl })));
+          setProducts(
+            data.map((p: { id: string; productName: string; imageUrl: string | null }) => ({
+              id: p.id,
+              name: p.productName,
+              imageUrl: p.imageUrl,
+            }))
+          );
         }
       })
       .catch(console.error);
@@ -76,13 +82,17 @@ export default function StaticAdsPage() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto">
-        {activeTab === "create" && (
+        {/* Kept mounted while hidden: its tiles keep polling (and advancing) an in-flight
+            batch, and the results are still there on return. The server-side sweep finishes
+            the chain regardless if the page is closed. */}
+        <div hidden={activeTab !== "create"}>
           <UnifiedGenerator
             products={products}
+            isActive={activeTab === "create"}
             onGalleryRefresh={() => setGalleryRefresh((n) => n + 1)}
             onEditAd={(id) => { setEditTargetId(id); setActiveTab("edit"); }}
           />
-        )}
+        </div>
 
         {activeTab === "edit" && (
           <EditMode

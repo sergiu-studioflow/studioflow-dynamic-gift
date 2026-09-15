@@ -8,8 +8,8 @@ export const maxDuration = 300;
 /**
  * GET /api/cron/publish-posts
  * Runs the whole publisher cycle (resume IG containers → sweep stuck →
- * claim due → publish → roll parents up). Scheduled every 10 minutes.
- * `?dryRun=1` exercises the claim/sweep logic without touching Meta or the queue.
+ * claim due → publish → roll parents up). Scheduled every 30 minutes during Sydney daytime.
+ * `?dryRun=1` is read-only: it reports stuck and due targets without touching Meta or the queue.
  */
 export async function GET(req: NextRequest) {
   if (!(await isAuthorizedCron(req))) {

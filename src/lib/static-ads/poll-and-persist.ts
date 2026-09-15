@@ -6,6 +6,14 @@ import { uploadToR2 } from "@/lib/r2";
 import { BRAND_SLUG } from "@/lib/static-ads/config";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 import { enqueueGateReview } from "@/lib/qc/enqueue";
+import { advanceChainStep, listChainWaiters } from "@/lib/static-ads/chain";
+
+/**
+ * How far back a sweep advances refined-chain waiters. Covers the overnight cron gap with
+ * room to spare, while keeping a sweep from reviving long-abandoned rows into fresh paid
+ * GPT Image 2 jobs.
+ */
+const CHAIN_SWEEP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export type Generation = typeof schema.staticAdGenerations.$inferSelect;
 
@@ -118,11 +126,25 @@ async function downloadAndUploadToR2(
   throw lastError || new Error("Download failed after 3 attempts");
 }
 
+function withRowTimeout<T>(work: Promise<T>, rowId: string, timeoutMs: number): Promise<unknown> {
+  return Promise.race([
+    work,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`sweep timeout for ${rowId}`)), timeoutMs)
+    ),
+  ]).catch((err) => {
+    console.error(`[static-ads/sweep] ${rowId}:`, err);
+  });
+}
+
 /**
- * Sweep all currently-generating rows for a client (or globally if clientId
- * is null/undefined), running poll+persist for each in parallel with a per-row
- * timeout. Returns when all polls have settled or timed out. Errors are
- * swallowed — stuck rows simply remain on their current state until the next sweep.
+ * Sweep in-flight rows for a client (or globally if clientId is null/undefined), each
+ * with a per-row timeout:
+ *   1. `generating` rows with a Kie job → poll + persist.
+ *   2. refined-chain waiters (pending refined / logo-refined rows) → fire their next
+ *      GPT Image 2 step once the source is done. Without this, chains only advanced while
+ *      the Create tab was polling them, and leaving the tab stranded every final.
+ * Errors are swallowed — stuck rows simply remain on their current state until the next sweep.
  */
 export async function sweepGeneratingRows(opts: {
   clientId?: string | null;
@@ -138,18 +160,20 @@ export async function sweepGeneratingRows(opts: {
   const candidates = rows.filter(
     (r) => !!r.kieJobId && (opts.clientId == null || r.clientId === opts.clientId)
   );
-  if (candidates.length === 0) return;
+  if (candidates.length > 0) {
+    await Promise.allSettled(
+      candidates.map((row) => withRowTimeout(pollAndPersistGeneration(row), row.id, timeoutMs))
+    );
+  }
+
+  // Runs after step 1 so a source that just completed is picked up without a second Kie poll.
+  const waiters = await listChainWaiters({
+    clientId: opts.clientId,
+    createdAfter: new Date(Date.now() - CHAIN_SWEEP_WINDOW_MS),
+  });
+  if (waiters.length === 0) return;
 
   await Promise.allSettled(
-    candidates.map((row) =>
-      Promise.race([
-        pollAndPersistGeneration(row),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`sweep timeout for ${row.id}`)), timeoutMs)
-        ),
-      ]).catch((err) => {
-        console.error(`[static-ads/sweep] ${row.id}:`, err);
-      })
-    )
+    waiters.map((row) => withRowTimeout(advanceChainStep(row), row.id, timeoutMs))
   );
 }

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isAuthError } from "@/lib/auth";
 import { getPresignedUploadUrl, uploadToR2 } from "@/lib/r2";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
+import { db, schema } from "@/lib/db";
+import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 
 
@@ -25,35 +27,39 @@ const ALLOWED_TYPES = [
 const MAX_SIZE = 500 * 1024 * 1024; // 500 MB
 
 /**
- * Resolve the R2 storage prefix.
+ * Resolve the R2 storage prefix. Every answer comes from the server, never from the browser:
+ * the bucket is shared by every StudioFlow brand, so a caller-supplied slug must not be able
+ * to point an upload at another brand's folder.
  *
- * Three resolution modes (in order of preference):
- * 1. clientId  — DB-validated; reads storage_prefix from clients/brands table (most secure)
- * 2. clientSlug — regex-validated; trusts caller. Used by characters/scenes uploads.
- * 3. brandSlug or env — agency-level fallback for shared assets / single-brand portals
+ * 1. clientId   — the brand's storage_prefix from the database
+ * 2. clientSlug — the storage_prefix of the brand with that slug (database lookup)
+ * 3. otherwise  — this portal's own agency folder from BRAND_SLUG (shared assets)
  */
 async function resolveStoragePrefix(opts: {
   clientId?: string | null;
   clientSlug?: string | null;
-  brandSlug?: string | null;
 }): Promise<string> {
-  const { clientId, clientSlug, brandSlug } = opts;
+  const { clientId, clientSlug } = opts;
 
   if (clientId) {
     const prefix = await getClientStoragePrefix(clientId);
-    if (prefix) return prefix;
-  }
-
-  const raw = brandSlug || process.env.BRAND_SLUG || "default";
-  const slug = raw.trim();
-  if (!SLUG_RE.test(slug)) {
-    throw new Error(`Invalid brand slug ${JSON.stringify(raw)} — must match ${SLUG_RE}`);
+    if (prefix) return prefix.replace(/\/+$/, "");
   }
 
   if (clientSlug && CLIENT_SLUG_RE.test(clientSlug.trim())) {
-    return `brands/${slug}/${clientSlug.trim()}`;
+    const [brand] = await db
+      .select({ storagePrefix: schema.brands.storagePrefix })
+      .from(schema.brands)
+      .where(eq(schema.brands.clientSlug, clientSlug.trim()))
+      .limit(1);
+    if (brand?.storagePrefix) return brand.storagePrefix.replace(/\/+$/, "");
   }
 
+  const raw = process.env.BRAND_SLUG || "default";
+  const slug = raw.trim();
+  if (!SLUG_RE.test(slug)) {
+    throw new Error(`Invalid BRAND_SLUG ${JSON.stringify(raw)} — must match ${SLUG_RE}`);
+  }
   return slug === "demo" ? "demo" : `brands/${slug}`;
 }
 
@@ -61,7 +67,7 @@ async function resolveStoragePrefix(opts: {
  * POST /api/upload
  *
  * Two modes:
- * 1. JSON body with { filename, contentType, brandSlug?, assetType, clientId?, clientSlug? }
+ * 1. JSON body with { filename, contentType, assetType, clientId?, clientSlug? }
  *    → returns presigned URL for direct browser upload
  * 2. FormData with file
  *    → server-side upload to R2, returns public URL
@@ -78,7 +84,7 @@ export async function POST(req: NextRequest) {
 
     // Mode 1: Presigned URL request (JSON body)
     if (contentType.includes("application/json")) {
-      const { filename, contentType: fileType, brandSlug, assetType, clientId, clientSlug } = await req.json();
+      const { filename, contentType: fileType, assetType, clientId, clientSlug } = await req.json();
 
       if (!filename || !fileType) {
         return NextResponse.json({ error: "filename and contentType required" }, { status: 400 });
@@ -87,7 +93,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `File type ${fileType} not allowed` }, { status: 400 });
       }
 
-      const storagePrefix = await resolveStoragePrefix({ clientId, clientSlug, brandSlug });
+      const storagePrefix = await resolveStoragePrefix({ clientId, clientSlug });
       const ext = filename.split(".").pop() || "bin";
       const safeAssetType = (assetType || "uploads").trim();
       if (!ASSET_TYPE_RE.test(safeAssetType)) {
@@ -103,7 +109,6 @@ export async function POST(req: NextRequest) {
     // Mode 2: Direct file upload (FormData)
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
-    const brandSlug = (formData.get("brandSlug") as string) || undefined;
     const assetType = (formData.get("assetType") as string) || "uploads";
     const clientId = (formData.get("clientId") as string) || undefined;
     const clientSlug = (formData.get("clientSlug") as string) || undefined;
@@ -118,7 +123,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "File too large (max 500MB)" }, { status: 400 });
     }
 
-    const storagePrefix = await resolveStoragePrefix({ clientId, clientSlug, brandSlug });
+    const storagePrefix = await resolveStoragePrefix({ clientId, clientSlug });
     const ext = file.name.split(".").pop() || "bin";
     const safeAssetType = (assetType || "uploads").trim();
     if (!ASSET_TYPE_RE.test(safeAssetType)) {

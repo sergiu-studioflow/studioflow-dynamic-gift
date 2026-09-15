@@ -6,7 +6,8 @@ import { and, eq, desc, asc } from "drizzle-orm";
 import { generateReviewGraphicForReview } from "@/lib/reviews/generate";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+// Captions run one review at a time (up to 10 per request).
+export const maxDuration = 800;
 
 /**
  * POST /api/review-graphics/generate

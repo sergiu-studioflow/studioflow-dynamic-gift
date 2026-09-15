@@ -3,7 +3,8 @@ import { isAuthorizedCron } from "@/lib/cron-auth";
 import { runMonthlyPlanning } from "@/lib/monthly-planning/run";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+// A produced slot runs the same two Claude agent calls (~4 min) and may start 60 s into the tick.
+export const maxDuration = 800;
 
 /**
  * GET /api/cron/monthly-planning-sweep

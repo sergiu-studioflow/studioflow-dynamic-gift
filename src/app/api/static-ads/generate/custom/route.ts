@@ -8,7 +8,8 @@ import { analyzeReferenceAd, generateCustomPrompt } from "@/lib/static-ads/custo
 import { submitKieJob, REFINE_PROMPT } from "@/lib/static-ads/kie-ai";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+// Two sequential Claude agent calls (analysis + prompt) take ~4 min; leave room for overload retries.
+export const maxDuration = 800;
 
 /** Prompt for the DG-specific logo-swap chain step (GPT2 image-to-image). */
 const LOGO_REFINE_PROMPT = "Keep everything the same, swap the logo to the logo image attached";

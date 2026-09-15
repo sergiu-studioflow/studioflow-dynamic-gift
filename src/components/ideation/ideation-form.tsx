@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { BrandSelect } from "@/components/shared/brand-select";
 import { Loader2, Sparkles } from "lucide-react";
 
 const CONTENT_TYPES = [
@@ -27,8 +28,6 @@ type IdeationFormProps = {
 };
 
 export function IdeationForm({ onSuccess }: IdeationFormProps) {
-  const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
-  const [brandsLoading, setBrandsLoading] = useState(true);
   const [brand, setBrand] = useState("");
   const [direction, setDirection] = useState("");
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
@@ -37,14 +36,6 @@ export function IdeationForm({ onSuccess }: IdeationFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/brands")
-      .then((res) => res.json())
-      .then((data) => setBrands(data))
-      .catch(() => setBrands([]))
-      .finally(() => setBrandsLoading(false));
-  }, []);
 
   function toggleType(typeId: string) {
     setSelectedTypes((prev) =>
@@ -114,23 +105,7 @@ export function IdeationForm({ onSuccess }: IdeationFormProps) {
         {/* Brand Selection */}
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">Brand *</label>
-          <Select value={brand} onValueChange={setBrand} disabled={brandsLoading}>
-            <SelectTrigger>
-              <SelectValue placeholder={brandsLoading ? "Loading brands..." : "Select a brand..."} />
-            </SelectTrigger>
-            <SelectContent>
-              {brands.map((b) => (
-                <SelectItem key={b.id} value={b.name}>
-                  {b.name}
-                </SelectItem>
-              ))}
-              {brands.length === 0 && !brandsLoading && (
-                <div className="px-3 py-2 text-sm text-muted-foreground">
-                  No brands configured. Add brands in Brand Intelligence.
-                </div>
-              )}
-            </SelectContent>
-          </Select>
+          <BrandSelect value={brand} onValueChange={setBrand} />
         </div>
 
         {/* Direction */}

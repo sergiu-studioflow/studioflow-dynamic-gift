@@ -1,6 +1,8 @@
 // Core types — matches the base schema (Better Auth + users + appConfig + brandIntelligence + activityLog)
 // Client-specific types are added when new systems are migrated into the portal
 
+import type { brands } from "@/lib/db/schema";
+
 export type User = {
   id: string;
   userId: string; // references Better Auth user.id (text)
@@ -183,6 +185,10 @@ export type BrandIntelligence = {
 // =============================================
 // MULTI-CLIENT MODULE TYPES
 // =============================================
+
+/** A row of GET /api/brands as the brand pickers read it. Derived from the schema, not
+ *  hand-written: renaming the column must fail the build, not blank the pickers. */
+export type BrandOption = Pick<typeof brands.$inferSelect, "id" | "brandName">;
 
 export type Client = {
   id: string;

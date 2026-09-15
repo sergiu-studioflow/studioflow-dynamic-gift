@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { BrandSelect } from "@/components/shared/brand-select";
 import { Loader2, Megaphone } from "lucide-react";
 
 const CAMPAIGN_OBJECTIVES = [
@@ -52,8 +53,6 @@ type AdCopyFormProps = {
 };
 
 export function AdCopyForm({ onSuccess }: AdCopyFormProps) {
-  const [brands, setBrands] = useState<{ id: string; brandName: string }[]>([]);
-  const [brandsLoading, setBrandsLoading] = useState(true);
   const [brand, setBrand] = useState("");
   const [campaignObjective, setCampaignObjective] = useState("");
   const [targetPersona, setTargetPersona] = useState("");
@@ -66,14 +65,6 @@ export function AdCopyForm({ onSuccess }: AdCopyFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/brands")
-      .then((res) => res.json())
-      .then((data) => setBrands(data))
-      .catch(() => setBrands([]))
-      .finally(() => setBrandsLoading(false));
-  }, []);
 
   function toggleAngle(angle: string) {
     setAngleEmphasis((prev) =>
@@ -159,23 +150,7 @@ export function AdCopyForm({ onSuccess }: AdCopyFormProps) {
         {/* Brand Selection */}
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">Brand *</label>
-          <Select value={brand} onValueChange={setBrand} disabled={brandsLoading}>
-            <SelectTrigger>
-              <SelectValue placeholder={brandsLoading ? "Loading brands..." : "Select a brand..."} />
-            </SelectTrigger>
-            <SelectContent>
-              {brands.map((b) => (
-                <SelectItem key={b.id} value={b.brandName}>
-                  {b.brandName}
-                </SelectItem>
-              ))}
-              {brands.length === 0 && !brandsLoading && (
-                <div className="px-3 py-2 text-sm text-muted-foreground">
-                  No brands configured.
-                </div>
-              )}
-            </SelectContent>
-          </Select>
+          <BrandSelect value={brand} onValueChange={setBrand} />
         </div>
 
         {/* Campaign Objective & Target Persona */}

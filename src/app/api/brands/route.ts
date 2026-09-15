@@ -1,12 +1,14 @@
 import { db, schema } from "@/lib/db";
 import { requireAuth, isAuthError } from "@/lib/auth";
+import type { BrandOption } from "@/lib/types";
 import { eq, asc } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod/v4";
 
 export const dynamic = "force-dynamic";
 
-// GET — list all active brands (sorted by sortOrder)
+// GET — list all active brands (sorted by sortOrder). Typed as BrandOption[] so this
+// response and BrandSelect can't drift apart again.
 export async function GET() {
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
@@ -17,7 +19,7 @@ export async function GET() {
     .where(eq(schema.brands.isActive, true))
     .orderBy(asc(schema.brands.sortOrder), asc(schema.brands.brandName));
 
-  return NextResponse.json(rows);
+  return NextResponse.json<BrandOption[]>(rows);
 }
 
 const createBrandSchema = z.object({

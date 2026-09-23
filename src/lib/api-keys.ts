@@ -67,8 +67,10 @@ export async function getApiKey(keyName: string): Promise<string> {
     if (row?.encryptedValue) {
       return decryptKey(row.encryptedValue);
     }
-  } catch {
-    // DB read failed — fall back to env var
+  } catch (err) {
+    // DB read or decrypt failed — fall back to env var. Logged because the fallback can be a
+    // different (or dead) account's key, and the provider's resulting error won't say why.
+    console.error(`[api-keys] ${keyName}: vault read failed, using env fallback —`, err instanceof Error ? err.message : err);
   }
 
   return (process.env[keyName] || "").trim();

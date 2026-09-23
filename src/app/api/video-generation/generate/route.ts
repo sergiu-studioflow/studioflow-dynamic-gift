@@ -19,7 +19,7 @@ import {
   formatNoRefTemplate,
   cleanVoiceDialogue,
 } from "@/lib/video-generation/pipeline";
-import { submitVideoJob } from "@/lib/video-generation/video-provider";
+import { submitVideoJob, checkVideoBalance, type VideoJobInput } from "@/lib/video-generation/video-provider";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 min timeout for multi-step AI pipeline
@@ -30,7 +30,13 @@ export const maxDuration = 300; // 5 min timeout for multi-step AI pipeline
  * If the function times out instead, the row stays `pending` until the abandon clock in
  * lib/video-generation/abandon.ts fails it.
  */
-async function failStep(generationId: string, step: number, label: string, err: unknown) {
+async function failStep(
+  generationId: string,
+  step: number,
+  label: string,
+  err: unknown,
+  { retryable = false }: { retryable?: boolean } = {}
+) {
   const detail = err instanceof Error ? err.message : String(err);
   await db
     .update(schema.videoGenerations)
@@ -38,7 +44,8 @@ async function failStep(generationId: string, step: number, label: string, err: 
     .where(eq(schema.videoGenerations.id, generationId));
   const shortDetail = detail.length > 400 ? `${detail.slice(0, 400)}…` : detail;
   return NextResponse.json(
-    { error: `${label}: ${shortDetail}`, failedStep: step, generationId },
+    // `retryable`: the prompts are saved, so the UI can offer "Retry render" (render step only).
+    { error: `${label}: ${shortDetail}`, failedStep: step, generationId, retryable },
     { status: 500 }
   );
 }
@@ -147,6 +154,12 @@ export async function POST(request: NextRequest) {
       }
       scene = s;
     }
+  }
+
+  // Before any paid prompt step: can the video provider's balance pay for the render?
+  const balanceProblem = await checkVideoBalance(Number(duration));
+  if (balanceProblem) {
+    return NextResponse.json({ error: balanceProblem }, { status: 402 });
   }
 
   // Create generation record with clientId
@@ -289,16 +302,22 @@ export async function POST(request: NextRequest) {
       imageUrls.push(toExternalUrl(c.imageUrl));
     }
 
+    const providerInput: VideoJobInput = {
+      prompt: promptForSeedance,
+      imageUrls,
+      aspectRatio,
+      duration: Number(duration),
+    };
+    await db
+      .update(schema.videoGenerations)
+      .set({ providerInput, updatedAt: new Date() })
+      .where(eq(schema.videoGenerations.id, generationId));
+
     let muapiResult;
     try {
-      muapiResult = await submitVideoJob({
-        prompt: promptForSeedance,
-        imageUrls,
-        aspectRatio,
-        duration: Number(duration),
-      });
+      muapiResult = await submitVideoJob(providerInput);
     } catch (err) {
-      return failStep(generationId, seedanceStep, "Seedance submission failed", err);
+      return failStep(generationId, seedanceStep, "Video render submission failed", err, { retryable: true });
     }
 
     await db

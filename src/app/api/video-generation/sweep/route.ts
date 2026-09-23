@@ -10,7 +10,8 @@ import {
   failAbandonedPipelines,
   failVideoGeneration,
   isProcessingAbandoned,
-  PROCESSING_ABANDONED_MESSAGE,
+  processingAbandonedMessage,
+  sameAttempt,
 } from "@/lib/video-generation/abandon";
 
 export const dynamic = "force-dynamic";
@@ -48,10 +49,17 @@ export async function GET(request: NextRequest) {
   let stillProcessing = 0;
 
   for (const gen of processing) {
-    if (!gen.muapiRequestId) continue;
+    if (!gen.muapiRequestId) {
+      // A render retry that died between claiming the row and submitting it.
+      if (isProcessingAbandoned(gen)) {
+        await failVideoGeneration(gen, processingAbandonedMessage(gen));
+        failed++;
+      }
+      continue;
+    }
 
     try {
-      const result = await pollVideoJob(gen.muapiRequestId);
+      const result = await pollVideoJob(gen.muapiRequestId, gen.duration);
 
       if (result.status === "completed" && result.videoUrl && result.videoUrl.length > 0) {
         // Download and persist to R2
@@ -74,7 +82,7 @@ export async function GET(request: NextRequest) {
         await db
           .update(schema.videoGenerations)
           .set({ videoUrl: finalVideoUrl, status: "completed", updatedAt: new Date() })
-          .where(eq(schema.videoGenerations.id, gen.id));
+          .where(sameAttempt(gen));
 
         // Quality Control gate.
         await enqueueGateReview({
@@ -93,7 +101,7 @@ export async function GET(request: NextRequest) {
             errorMessage: result.error || "Video generation failed",
             updatedAt: new Date(),
           })
-          .where(eq(schema.videoGenerations.id, gen.id));
+          .where(sameAttempt(gen));
         failed++;
       } else if (result.status === "completed" && !result.videoUrl) {
         await db
@@ -103,10 +111,10 @@ export async function GET(request: NextRequest) {
             errorMessage: "Video generation completed but no video was produced",
             updatedAt: new Date(),
           })
-          .where(eq(schema.videoGenerations.id, gen.id));
+          .where(sameAttempt(gen));
         failed++;
       } else if (isProcessingAbandoned(gen)) {
-        await failVideoGeneration(gen, PROCESSING_ABANDONED_MESSAGE);
+        await failVideoGeneration(gen, processingAbandonedMessage(gen));
         failed++;
       } else {
         stillProcessing++;
@@ -115,7 +123,7 @@ export async function GET(request: NextRequest) {
       // Transient provider error — skip this one, unless it has been failing for longer
       // than any render takes.
       if (isProcessingAbandoned(gen)) {
-        await failVideoGeneration(gen, PROCESSING_ABANDONED_MESSAGE).catch(() => {});
+        await failVideoGeneration(gen, processingAbandonedMessage(gen)).catch(() => {});
         failed++;
       } else {
         stillProcessing++;

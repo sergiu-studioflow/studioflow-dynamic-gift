@@ -3,11 +3,12 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Target, Brain, Package, Sparkles, Loader2 } from "lucide-react";
+import { ArrowLeft, Target, Brain, Package, Sparkles, Loader2, Pencil } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
 import { ClientBrandIntelEditor } from "@/components/clients/client-brand-intel-editor";
 import { ClientProductsTable } from "@/components/clients/client-products-table";
 import { ClientStaticAdPrompts } from "@/components/clients/client-static-ad-prompts";
+import { ClientDetailsEditor } from "@/components/clients/client-details-editor";
 import { usePortalRole } from "@/components/clients/portal-role";
 import type { Client } from "@/lib/types";
 
@@ -118,7 +119,14 @@ export default function ClientDetailPage() {
 
       {/* Tab Content */}
       {/* Keyed by brand so edits, selections and uploads never carry over to another brand. */}
-      {tab === "overview" && <OverviewTab client={client} />}
+      {tab === "overview" && (
+        <OverviewTab
+          key={slug}
+          client={client}
+          canEdit={canManagePrompts}
+          onSaved={(updated) => setLoaded({ slug, client: updated })}
+        />
+      )}
       {tab === "brand-intel" && <ClientBrandIntelEditor key={slug} clientSlug={slug} />}
       {tab === "products" && <ClientProductsTable key={slug} clientSlug={slug} clientId={client.id} />}
       {tab === "ad-prompts" && (
@@ -128,21 +136,53 @@ export default function ClientDetailPage() {
   );
 }
 
-function OverviewTab({ client }: { client: Client }) {
+function OverviewTab({
+  client,
+  canEdit,
+  onSaved,
+}: {
+  client: Client;
+  canEdit: boolean;
+  onSaved: (client: Client) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div className="space-y-4 rounded-xl border border-border/50 bg-card p-5">
-        <h3 className="font-medium">Client Details</h3>
-        <dl className="space-y-3 text-sm">
-          <Row label="Name" value={client.clientName} />
-          <Row label="Slug" value={client.clientSlug || "—"} mono />
-          {client.website && <Row label="Website" value={client.website} />}
-          {client.category && <Row label="Category" value={client.category} />}
-          {client.primaryMarket && <Row label="Market" value={client.primaryMarket} />}
-          {client.currency && <Row label="Currency" value={client.currency} />}
-          <Row label="Status" value={client.status} />
-          {client.createdAt && <Row label="Created" value={formatDate(client.createdAt)} />}
-        </dl>
+        <div className="flex items-center justify-between">
+          <h3 className="font-medium">Client Details</h3>
+          {canEdit && !editing && (
+            <button
+              onClick={() => setEditing(true)}
+              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <Pencil className="h-3 w-3" /> Edit
+            </button>
+          )}
+        </div>
+        {editing ? (
+          <ClientDetailsEditor
+            client={client}
+            onCancel={() => setEditing(false)}
+            onSaved={(updated) => {
+              onSaved(updated);
+              setEditing(false);
+            }}
+          />
+        ) : (
+          <dl className="space-y-3 text-sm">
+            <Row label="Name" value={client.clientName} />
+            <Row label="Slug" value={client.clientSlug || "—"} mono />
+            {client.website && <Row label="Website" value={client.website} />}
+            {client.category && <Row label="Category" value={client.category} />}
+            {client.primaryMarket && <Row label="Market" value={client.primaryMarket} />}
+            {client.currency && <Row label="Currency" value={client.currency} />}
+            {client.cluster && <Row label="Label" value={client.cluster} />}
+            <Row label="Status" value={client.status} />
+            {client.createdAt && <Row label="Created" value={formatDate(client.createdAt)} />}
+          </dl>
+        )}
       </div>
 
       <div className="space-y-4 rounded-xl border border-border/50 bg-card p-5">

@@ -483,6 +483,13 @@ export const videoGenerations = pgTable("video_generations", {
   finalPrompt: text("final_prompt"),
   voiceCleanedPrompt: text("voice_cleaned_prompt"),
   muapiRequestId: text("muapi_request_id"),
+  // What the render step sent to the provider (0015) — lets "Retry render" skip the paid prompt steps.
+  providerInput: jsonb("provider_input").$type<{
+    prompt: string;
+    imageUrls: string[];
+    aspectRatio: string;
+    duration: number;
+  }>(),
   videoUrl: text("video_url"),
   status: text("status").notNull().default("pending"),
   errorMessage: text("error_message"),

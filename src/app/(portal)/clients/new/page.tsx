@@ -7,22 +7,7 @@ import Link from "next/link";
 import { slugify, cn } from "@/lib/utils";
 import { useClient } from "@/lib/client-context";
 import { usePortalRole } from "@/components/clients/portal-role";
-
-// The category becomes the brand's vertical in the Static-Ad Prompt Builder, so the
-// options describe Dynamic Gift's promotional-products brands, not DTC verticals.
-const CATEGORIES = [
-  "Promotional Products", "Custom Apparel & Headwear", "Lanyards & Badges",
-  "Event Displays & Signage", "Inflatables", "Awards & Medals", "Corporate Gifting", "Other",
-];
-
-const HEX_COLOR = /^#[0-9a-f]{6}$/i;
-
-const MARKETS = [
-  "Australia", "United States", "United Kingdom", "Canada", "Europe",
-  "Global", "APAC", "MENA", "LATAM", "Other",
-];
-
-const CURRENCIES = ["AUD", "USD", "GBP", "EUR", "CAD", "NZD"];
+import { CATEGORIES, MARKETS, CURRENCIES, HEX_COLOR } from "@/lib/client-fields";
 
 type FormData = {
   clientName: string;

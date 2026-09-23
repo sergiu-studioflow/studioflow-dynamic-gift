@@ -11,7 +11,8 @@ import {
   isPipelineAbandoned,
   isProcessingAbandoned,
   PIPELINE_ABANDONED_MESSAGE,
-  PROCESSING_ABANDONED_MESSAGE,
+  processingAbandonedMessage,
+  sameAttempt,
 } from "@/lib/video-generation/abandon";
 
 export const dynamic = "force-dynamic";
@@ -104,7 +105,7 @@ export async function GET(
   // Still processing — poll Muapi
   if (generation.status === "processing" && generation.muapiRequestId) {
     try {
-      const result = await pollVideoJob(generation.muapiRequestId);
+      const result = await pollVideoJob(generation.muapiRequestId, generation.duration);
 
       if (result.status === "completed" && result.videoUrl && result.videoUrl.length > 0) {
         // Download and persist to R2
@@ -126,7 +127,7 @@ export async function GET(
         await db
           .update(schema.videoGenerations)
           .set({ videoUrl: finalVideoUrl, status: "completed", updatedAt: new Date() })
-          .where(eq(schema.videoGenerations.id, id));
+          .where(sameAttempt(generation));
 
         // Quality Control gate. No-ops if the R2 upload fell back to a tempfile URL;
         // the lazy-persist branch above re-enqueues once R2 lands.
@@ -154,7 +155,7 @@ export async function GET(
         await db
           .update(schema.videoGenerations)
           .set({ status: "error", errorMessage: result.error || "Video generation failed", updatedAt: new Date() })
-          .where(eq(schema.videoGenerations.id, id));
+          .where(sameAttempt(generation));
 
         return NextResponse.json({
           ...generation,
@@ -168,7 +169,7 @@ export async function GET(
         await db
           .update(schema.videoGenerations)
           .set({ status: "error", errorMessage: "Video generation completed but no video was produced", updatedAt: new Date() })
-          .where(eq(schema.videoGenerations.id, id));
+          .where(sameAttempt(generation));
 
         return NextResponse.json({
           ...generation,
@@ -178,7 +179,7 @@ export async function GET(
       }
 
       if (isProcessingAbandoned(generation)) {
-        return NextResponse.json(await failVideoGeneration(generation, PROCESSING_ABANDONED_MESSAGE));
+        return NextResponse.json(await failVideoGeneration(generation, processingAbandonedMessage(generation)));
       }
 
       // Still processing
@@ -190,10 +191,15 @@ export async function GET(
       // Transient poll error — return current state, unless the provider has been failing
       // to answer for longer than any render takes.
       if (isProcessingAbandoned(generation)) {
-        return NextResponse.json(await failVideoGeneration(generation, PROCESSING_ABANDONED_MESSAGE));
+        return NextResponse.json(await failVideoGeneration(generation, processingAbandonedMessage(generation)));
       }
       return NextResponse.json(generation);
     }
+  }
+
+  // A render retry that died between claiming the row and submitting it.
+  if (isProcessingAbandoned(generation)) {
+    return NextResponse.json(await failVideoGeneration(generation, processingAbandonedMessage(generation)));
   }
 
   // Pending or other states

@@ -69,7 +69,8 @@ type PipelineState =
   | { phase: "pipeline"; currentStep: number }
   | { phase: "generating"; generationId: string }
   | { phase: "completed"; generationId: string; videoUrl: string }
-  | { phase: "error"; message: string; failedStep?: number };
+  // generationId + retryable: the prompts are saved, so only the render needs re-submitting.
+  | { phase: "error"; message: string; failedStep?: number; generationId?: string; retryable?: boolean };
 
 type PipelineDebugData = {
   crafterPrompt?: string;
@@ -308,6 +309,8 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
           setState({
             phase: "error",
             message: data.errorMessage || "Video generation failed",
+            generationId,
+            retryable: !!data.providerInput,
           });
         }
       } catch {
@@ -378,6 +381,8 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
           phase: "error",
           message: (data.error as string) || "Pipeline failed",
           failedStep: data.failedStep as number | undefined,
+          generationId: data.generationId as string | undefined,
+          retryable: data.retryable === true,
         });
         return;
       }
@@ -415,6 +420,44 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
       });
     }
   }, [clientId, trackGeneration, selectedProduct, selectedProductId, selectedCharacterId, selectedCharacterIds, selectedSceneId, selectedType, selectedArollStyle, showCharacters, showScenes, isPodcast, productOptional, isAroll, script, selectedLength, selectedSize]);
+
+  // Re-submit only the render step; the prompts from the failed attempt are reused.
+  // The panel stays on the error until the server has claimed the row: switching to
+  // "generating" first let the poller read the old error back while Kie was still answering.
+  const [retrying, setRetrying] = useState(false);
+  const handleRetryRender = useCallback(async (generationId: string) => {
+    setRetrying(true);
+    try {
+      const res = await fetch(`/api/video-generation/generate/${generationId}/retry`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setState({
+          phase: "error",
+          message: data.error || `Retry failed (${res.status})`,
+          generationId,
+          retryable: data.retryable === true || res.status === 402,
+        });
+        return;
+      }
+      setState({ phase: "generating", generationId });
+      trackGeneration({
+        id: generationId,
+        productName: data.productName ?? null,
+        videoType: data.videoType || "ugc",
+        arollStyle: data.arollStyle || undefined,
+        status: "processing",
+      });
+    } catch (err) {
+      setState({
+        phase: "error",
+        message: err instanceof Error ? err.message : "Network error",
+        generationId,
+        retryable: true,
+      });
+    } finally {
+      setRetrying(false);
+    }
+  }, [trackGeneration]);
 
   const resetState = () => {
     stepTimersRef.current.forEach(clearTimeout);
@@ -1000,9 +1043,22 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
               <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
               <div>
                 <p className="text-xs text-red-500">{state.message}</p>
-                <button onClick={resetState} className="mt-1 text-[11px] text-red-400 hover:underline">
-                  Try again
-                </button>
+                <div className="mt-1 flex gap-3">
+                  {state.retryable && state.generationId && (
+                    <button
+                      onClick={() => handleRetryRender(state.generationId!)}
+                      disabled={retrying}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-red-400 hover:underline disabled:opacity-60"
+                      title="Re-submits the saved prompt to the video service without re-running the prompt steps"
+                    >
+                      {retrying && <Loader2 className="h-3 w-3 animate-spin" />}
+                      {retrying ? "Retrying…" : "Retry render"}
+                    </button>
+                  )}
+                  <button onClick={resetState} disabled={retrying} className="text-[11px] text-red-400 hover:underline disabled:opacity-60">
+                    {state.retryable && state.generationId ? "Start over" : "Try again"}
+                  </button>
+                </div>
               </div>
             </div>
           )}

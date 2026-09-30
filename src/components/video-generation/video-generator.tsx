@@ -36,7 +36,6 @@ import { useGenerationTracker } from "@/lib/video-generation/generation-tracker"
 import { VIDEO_MODELS, DEFAULT_VIDEO_MODEL, getVideoModel, estimateVideoCredits, type VideoModelId } from "@/lib/video-generation/video-models";
 import type { VoiceOption } from "@/lib/video-generation/voices";
 import { VoicePicker } from "@/components/video-generation/voice-picker";
-import { usePortalRole } from "@/components/clients/portal-role";
 
 type Product = {
   id: string;
@@ -234,7 +233,6 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
   const [voicesLoading, setVoicesLoading] = useState(true);
   const [voicesError, setVoicesError] = useState<string | null>(null);
   const [voicesRefreshing, setVoicesRefreshing] = useState(false);
-  const isAdmin = usePortalRole() === "admin";
   const activeModel = getVideoModel(videoModel);
   const lengthOptions = activeModel.durations.map((d) => ({ value: String(d), label: `${d}s` }));
   const selectedVoice = voices.find((v) => v.voiceId === voiceId);
@@ -977,7 +975,8 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
             disabled={isProcessing}
             loading={voicesLoading}
             error={voicesError}
-            onRefresh={isAdmin ? refreshVoices : undefined}
+            // usePortalRole() only works under /clients; the sync route itself is admin-only (403 otherwise).
+            onRefresh={refreshVoices}
             refreshing={voicesRefreshing}
           />
         </section>

@@ -105,7 +105,7 @@ export async function GET(
   // Still processing — poll Muapi
   if (generation.status === "processing" && generation.muapiRequestId) {
     try {
-      const result = await pollVideoJob(generation.muapiRequestId, generation.duration);
+      const result = await pollVideoJob(generation.muapiRequestId, generation.duration, generation.videoModel);
 
       if (result.status === "completed" && result.videoUrl && result.videoUrl.length > 0) {
         // Download and persist to R2

@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-      const result = await pollVideoJob(gen.muapiRequestId, gen.duration);
+      const result = await pollVideoJob(gen.muapiRequestId, gen.duration, gen.videoModel);
 
       if (result.status === "completed" && result.videoUrl && result.videoUrl.length > 0) {
         // Download and persist to R2

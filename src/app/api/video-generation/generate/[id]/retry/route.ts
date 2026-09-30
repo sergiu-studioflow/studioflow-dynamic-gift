@@ -44,7 +44,7 @@ export async function POST(
     );
   }
 
-  const balanceProblem = await checkVideoBalance(input.duration);
+  const balanceProblem = await checkVideoBalance(input.duration, input.model);
   if (balanceProblem) {
     return NextResponse.json({ error: balanceProblem }, { status: 402 });
   }

@@ -26,11 +26,17 @@ import {
   Bug,
   ChevronDown,
   ChevronRight,
+  AudioLines,
+  Gauge,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useClient } from "@/lib/client-context";
 import { StepProgress, type Step } from "@/components/static-ads/step-progress";
 import { useGenerationTracker } from "@/lib/video-generation/generation-tracker";
+import { VIDEO_MODELS, DEFAULT_VIDEO_MODEL, getVideoModel, estimateVideoCredits, type VideoModelId } from "@/lib/video-generation/video-models";
+import type { VoiceOption } from "@/lib/video-generation/voices";
+import { VoicePicker } from "@/components/video-generation/voice-picker";
+import { usePortalRole } from "@/components/clients/portal-role";
 
 type Product = {
   id: string;
@@ -138,12 +144,6 @@ const AROLL_STYLES = [
   },
 ];
 
-const LENGTH_OPTIONS = [
-  { value: "5", label: "5s" },
-  { value: "10", label: "10s" },
-  { value: "15", label: "15s" },
-];
-
 const SIZE_OPTIONS = [
   { value: "9:16", label: "9:16", widthClass: "w-2.5 h-[18px]" },
   { value: "16:9", label: "16:9", widthClass: "w-[18px] h-2.5" },
@@ -228,6 +228,16 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [selectedLength, setSelectedLength] = useState("15");
   const [selectedSize, setSelectedSize] = useState("9:16");
+  const [videoModel, setVideoModel] = useState<VideoModelId>(DEFAULT_VIDEO_MODEL);
+  const [voiceId, setVoiceId] = useState("");
+  const [voices, setVoices] = useState<VoiceOption[]>([]);
+  const [voicesLoading, setVoicesLoading] = useState(true);
+  const [voicesError, setVoicesError] = useState<string | null>(null);
+  const [voicesRefreshing, setVoicesRefreshing] = useState(false);
+  const isAdmin = usePortalRole() === "admin";
+  const activeModel = getVideoModel(videoModel);
+  const lengthOptions = activeModel.durations.map((d) => ({ value: String(d), label: `${d}s` }));
+  const selectedVoice = voices.find((v) => v.voiceId === voiceId);
   const [script, setScript] = useState("");
   const [state, setState] = useState<PipelineState>({ phase: "idle" });
   const [debugData, setDebugData] = useState<PipelineDebugData>({});
@@ -260,6 +270,43 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
   useEffect(() => {
     return () => stepTimersRef.current.forEach(clearTimeout);
   }, []);
+
+  // Voices are agency-wide (one ElevenLabs account), so they load once, not per client.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/video-generation/voices")
+      .then((r) => r.json())
+      .then((data: { voices?: VoiceOption[]; syncError?: string | null }) => {
+        if (cancelled) return;
+        setVoices(Array.isArray(data.voices) ? data.voices : []);
+        setVoicesError(data.syncError ?? null);
+      })
+      .catch(() => { if (!cancelled) setVoicesError("Could not load voices"); })
+      .finally(() => { if (!cancelled) setVoicesLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const refreshVoices = useCallback(async () => {
+    setVoicesRefreshing(true);
+    try {
+      const res = await fetch("/api/video-generation/voices", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Refresh failed (${res.status})`);
+      setVoices(data.voices ?? []);
+      setVoicesError(null);
+    } catch (err) {
+      setVoicesError(err instanceof Error ? err.message : "Refresh failed");
+    } finally {
+      setVoicesRefreshing(false);
+    }
+  }, []);
+
+  // A longer length only exists on Premium; switching back caps it at the Standard maximum.
+  const chooseModel = (id: VideoModelId) => {
+    setVideoModel(id);
+    const allowed = getVideoModel(id).durations;
+    if (!allowed.includes(Number(selectedLength))) setSelectedLength(String(Math.max(...allowed)));
+  };
 
   // Fetch characters and scenes (scoped by clientId)
   useEffect(() => {
@@ -354,6 +401,8 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
           script: script.trim(),
           duration: Number(selectedLength),
           aspectRatio: selectedSize,
+          videoModel,
+          voiceId: voiceId || undefined,
           hasCharacter: showCharacters ? (isPodcast ? selectedCharacterIds.length > 0 : !!selectedCharacterId) : false,
           videoType: selectedType,
           arollStyle: isAroll ? selectedArollStyle : undefined,
@@ -419,7 +468,7 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
         message: err instanceof Error ? err.message : "Network error",
       });
     }
-  }, [clientId, trackGeneration, selectedProduct, selectedProductId, selectedCharacterId, selectedCharacterIds, selectedSceneId, selectedType, selectedArollStyle, showCharacters, showScenes, isPodcast, productOptional, isAroll, script, selectedLength, selectedSize]);
+  }, [clientId, trackGeneration, selectedProduct, selectedProductId, selectedCharacterId, selectedCharacterIds, selectedSceneId, selectedType, selectedArollStyle, showCharacters, showScenes, isPodcast, productOptional, isAroll, script, selectedLength, selectedSize, videoModel, voiceId]);
 
   // Re-submit only the render step; the prompts from the failed attempt are reused.
   // The panel stays on the error until the server has claimed the row: switching to
@@ -625,6 +674,8 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
   const productSectionNum = showProducts ? nextSection++ : 0;
   const characterSectionNum = showCharacters ? nextSection++ : 0;
   const sceneSectionNum = showScenes ? nextSection++ : 0;
+  const voiceSectionNum = nextSection++;
+  const modelSectionNum = nextSection++;
   const lengthSectionNum = nextSection++;
   const sizeSectionNum = nextSection++;
   const scriptSectionNum = nextSection++;
@@ -911,6 +962,59 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
           )}
         </section>}
 
+        {/* Voice — the chosen voice's clip is sent to Seedance as reference audio (accent + voice) */}
+        <section className="rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <AudioLines className="h-4 w-4 text-primary" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {voiceSectionNum}. Voice <span className="text-muted-foreground/50 normal-case font-normal">(optional)</span>
+            </h3>
+          </div>
+          <VoicePicker
+            voices={voices}
+            value={voiceId}
+            onChange={setVoiceId}
+            disabled={isProcessing}
+            loading={voicesLoading}
+            error={voicesError}
+            onRefresh={isAdmin ? refreshVoices : undefined}
+            refreshing={voicesRefreshing}
+          />
+        </section>
+
+        {/* Model */}
+        <section className="rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Gauge className="h-4 w-4 text-primary" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{modelSectionNum}. Model</h3>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {VIDEO_MODELS.map((m) => (
+              <button
+                key={m.id}
+                aria-pressed={videoModel === m.id}
+                onClick={() => chooseModel(m.id)}
+                disabled={isProcessing}
+                className={cn(
+                  "rounded-lg border-2 p-3 text-left transition-all",
+                  videoModel === m.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/40",
+                  isProcessing && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <p className={cn("text-xs font-semibold", videoModel === m.id ? "text-primary" : "text-foreground")}>{m.label}</p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">{m.detail}</p>
+                <p className="mt-1.5 text-[10px] font-medium text-muted-foreground">
+                  {(() => {
+                    // Price a length this model can make: Standard caps at 15s when 20/30s is selected.
+                    const len = Math.min(Number(selectedLength), Math.max(...m.durations));
+                    return `~${estimateVideoCredits(len, m.id).toLocaleString()} Kie credits for ${len}s`;
+                  })()}
+                </p>
+              </button>
+            ))}
+          </div>
+        </section>
+
         {/* Length */}
         <section className="rounded-xl border border-border bg-card p-4">
           <div className="flex items-center gap-2 mb-3">
@@ -918,7 +1022,7 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{lengthSectionNum}. Length</h3>
           </div>
           <div className="flex items-center gap-1.5">
-            {LENGTH_OPTIONS.map((opt) => (
+            {lengthOptions.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => setSelectedLength(opt.value)}
@@ -1009,7 +1113,8 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
                 {productLabel}
               </p>
               <p className="text-[11px] text-muted-foreground truncate">
-                {typeLabel} · {selectedLength}s · {selectedSize}{talentLabel ? ` · ${talentLabel}` : ""}
+                {typeLabel} · {activeModel.label} · {selectedLength}s · {selectedSize}{talentLabel ? ` · ${talentLabel}` : ""}
+                {selectedVoice ? ` · ${selectedVoice.name}` : ""}
                 {script.trim() ? " · Script ready" : ""}
               </p>
             </div>

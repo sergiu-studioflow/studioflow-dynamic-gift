@@ -105,6 +105,12 @@ export const CONFIGURABLE_KEYS = [
     description: "Powers the Review Scraping System (Google Maps reviews scraper)",
   },
   {
+    keyName: "ELEVENLABS_API_KEY",
+    label: "ElevenLabs",
+    description:
+      "Supplies the voices for Video Generation (accent, male/female). Only voice previews are used, so generating videos spends no ElevenLabs credits.",
+  },
+  {
     keyName: "META_SYSTEM_USER_TOKEN",
     label: "Meta System User Token",
     description:

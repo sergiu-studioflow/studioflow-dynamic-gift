@@ -1,25 +1,16 @@
 /**
- * Kie AI Seedance 2 Video client.
+ * Kie AI Seedance video client (Seedance 2.0 and 2.5 — see video-models.ts).
  * Separate from kie-ai.ts (which handles Nano Banana 2 image generation).
  *
- * Submit: POST /api/v1/jobs/createTask  (model: "bytedance/seedance-2")
+ * Submit: POST /api/v1/jobs/createTask  (model: "bytedance/seedance-2" | "bytedance/seedance-2-5")
  * Poll:   GET  /api/v1/jobs/recordInfo?taskId=...
  */
 
 import { getApiKey as getConfiguredKey } from "@/lib/api-keys";
+import { estimateVideoCredits, getVideoModel } from "./video-models";
 
 const KIE_API_BASE = "https://api.kie.ai/api/v1/jobs";
 const KIE_CREDIT_URL = "https://api.kie.ai/api/v1/chat/credit";
-
-/**
- * Seedance 2 at 720p with audio, as Kie actually billed it: 15 s = 615 credits, 4 s = 164.
- * Used for the pre-flight balance check and to tell the user what a render needs.
- */
-const SEEDANCE_CREDITS_PER_SECOND = 41;
-
-export function estimateSeedanceCredits(durationSeconds: number): number {
-  return Math.ceil(durationSeconds * SEEDANCE_CREDITS_PER_SECOND);
-}
 
 async function getApiKey(): Promise<string> {
   const key = await getConfiguredKey("KIE_AI_API_KEY");
@@ -56,10 +47,10 @@ const BALANCE_WORDS = /balance|credit|top ?up/i;
  *   client: the submit-time check already passed. Shown verbatim, it sent Dynamic Gift
  *   hunting for a top-up on 22 Sep 2026 while their Kie account held 2,383 credits.
  */
-async function describeSubmitRefusal(msg: string, durationSeconds: number): Promise<string> {
+async function describeSubmitRefusal(msg: string, durationSeconds: number, modelId?: string): Promise<string> {
   if (!BALANCE_WORDS.test(msg)) return `Kie AI refused the video job: ${msg}`;
   const credits = await getKieCredits();
-  const needed = estimateSeedanceCredits(durationSeconds);
+  const needed = estimateVideoCredits(durationSeconds, modelId);
   const balance = credits === null ? "" : ` Balance: ${Math.floor(credits)} credits;`;
   return `Your Kie AI account doesn't have enough credits for this video.${balance} a ${durationSeconds}s video needs about ${needed}. Top up at kie.ai, then retry the render.`;
 }
@@ -68,7 +59,8 @@ async function describeTaskFailure(
   failCode: string | number | undefined,
   failMsg: string | undefined,
   creditsConsumed: number | undefined,
-  durationSeconds: number | undefined
+  durationSeconds: number | undefined,
+  modelId: string | undefined
 ): Promise<string> {
   const code = failCode ? ` (code ${failCode})` : "";
   const detail = failMsg || "Video generation failed";
@@ -76,7 +68,7 @@ async function describeTaskFailure(
   const quoted = `"${detail.replace(/[.\s]+$/, "")}"`;
 
   const credits = await getKieCredits();
-  const needed = durationSeconds ? estimateSeedanceCredits(durationSeconds) : null;
+  const needed = durationSeconds ? estimateVideoCredits(durationSeconds, modelId) : null;
   if (credits !== null && needed !== null && credits < needed) {
     return `Your Kie AI account doesn't have enough credits for this video. Balance: ${Math.floor(credits)} credits; a ${durationSeconds}s video needs about ${needed}. Top up at kie.ai, then retry the render.`;
   }
@@ -90,6 +82,10 @@ export type KieVideoJobInput = {
   imageUrls: string[];
   aspectRatio: string;
   duration: number;
+  /** Voice reference clip(s): Seedance takes the speaker's accent and voice from them. */
+  audioUrls?: string[];
+  /** A video-models.ts id; missing = Seedance 2.0 (rows from before 0016). */
+  model?: string;
 };
 
 export type KieVideoSubmitResult = {
@@ -107,6 +103,8 @@ export async function submitKieVideoJob({
   imageUrls,
   aspectRatio,
   duration,
+  audioUrls,
+  model,
 }: KieVideoJobInput): Promise<KieVideoSubmitResult> {
   const apiKey = await getApiKey();
   // Bounded: a hung submit would otherwise hold a claimed retry row until the function dies.
@@ -118,10 +116,11 @@ export async function submitKieVideoJob({
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "bytedance/seedance-2",
+      model: getVideoModel(model).kieModel,
       input: {
         prompt,
         reference_image_urls: imageUrls.length > 0 ? imageUrls : undefined,
+        reference_audio_urls: audioUrls && audioUrls.length > 0 ? audioUrls : undefined,
         aspect_ratio: aspectRatio,
         duration,
         resolution: "720p",
@@ -133,7 +132,7 @@ export async function submitKieVideoJob({
 
   if (!res.ok) {
     const text = await res.text();
-    if (res.status === 402) throw new Error(await describeSubmitRefusal(text, duration));
+    if (res.status === 402) throw new Error(await describeSubmitRefusal(text, duration, model));
     throw new Error(`Kie AI video submit failed (${res.status}): ${text}`);
   }
 
@@ -141,7 +140,7 @@ export async function submitKieVideoJob({
 
   if (json.code !== 200 && json.code !== 0) {
     const msg = json.msg || JSON.stringify(json);
-    if (json.code === 402 || BALANCE_WORDS.test(msg)) throw new Error(await describeSubmitRefusal(msg, duration));
+    if (json.code === 402 || BALANCE_WORDS.test(msg)) throw new Error(await describeSubmitRefusal(msg, duration, model));
     throw new Error(`Kie AI video submit error: ${msg}`);
   }
 
@@ -155,7 +154,8 @@ export async function submitKieVideoJob({
 
 export async function pollKieVideoJob(
   requestId: string,
-  durationSeconds?: number
+  durationSeconds?: number,
+  modelId?: string
 ): Promise<KieVideoPollResult> {
   const apiKey = await getApiKey();
   const res = await fetch(
@@ -202,7 +202,7 @@ export async function pollKieVideoJob(
   if (state === "failed" || state === "fail") {
     return {
       status: "failed",
-      error: await describeTaskFailure(data.failCode, data.failMsg, data.creditsConsumed, durationSeconds),
+      error: await describeTaskFailure(data.failCode, data.failMsg, data.creditsConsumed, durationSeconds, modelId),
     };
   }
 

@@ -19,7 +19,9 @@ import {
   formatNoRefTemplate,
   cleanVoiceDialogue,
 } from "@/lib/video-generation/pipeline";
-import { submitVideoJob, checkVideoBalance, type VideoJobInput } from "@/lib/video-generation/video-provider";
+import { submitVideoJob, checkVideoBalance, supportsVoicesAndModels, type VideoJobInput } from "@/lib/video-generation/video-provider";
+import { VIDEO_MODELS, DEFAULT_VIDEO_MODEL } from "@/lib/video-generation/video-models";
+import { getVoiceClipUrl } from "@/lib/video-generation/voices";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 min timeout for multi-step AI pipeline
@@ -78,7 +80,36 @@ export async function POST(request: NextRequest) {
     hasCharacter = false,
     videoType = "ugc",
     arollStyle,
+    videoModel = DEFAULT_VIDEO_MODEL,
+    voiceId,
   } = body;
+
+  const model = VIDEO_MODELS.find((m) => m.id === videoModel);
+  if (!model) {
+    return NextResponse.json({ error: `Unknown video model "${videoModel}"` }, { status: 400 });
+  }
+  if (!model.durations.includes(Number(duration))) {
+    return NextResponse.json(
+      { error: `${model.label} videos can be ${model.durations.join(", ")} seconds long` },
+      { status: 400 }
+    );
+  }
+
+  if ((model.id !== DEFAULT_VIDEO_MODEL || voiceId) && !supportsVoicesAndModels()) {
+    return NextResponse.json(
+      { error: "Voices and the Premium model need the Kie AI video provider" },
+      { status: 400 }
+    );
+  }
+
+  // The voice's clip goes to Seedance as reference audio: it sets the accent and voice, the prompt is untouched.
+  let voiceClipUrl: string | null = null;
+  if (voiceId) {
+    voiceClipUrl = await getVoiceClipUrl(String(voiceId));
+    if (!voiceClipUrl) {
+      return NextResponse.json({ error: "That voice is no longer available — pick another one" }, { status: 400 });
+    }
+  }
 
   if (!clientId) {
     return NextResponse.json({ error: "clientId is required — select a client first" }, { status: 400 });
@@ -157,7 +188,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Before any paid prompt step: can the video provider's balance pay for the render?
-  const balanceProblem = await checkVideoBalance(Number(duration));
+  const balanceProblem = await checkVideoBalance(Number(duration), model.id);
   if (balanceProblem) {
     return NextResponse.json({ error: balanceProblem }, { status: 402 });
   }
@@ -176,6 +207,8 @@ export async function POST(request: NextRequest) {
       script: script.trim(),
       duration: Number(duration),
       aspectRatio,
+      voiceId: voiceClipUrl ? String(voiceId) : null,
+      videoModel: model.id,
       status: "pending",
       currentStep: 0,
     })
@@ -307,6 +340,8 @@ export async function POST(request: NextRequest) {
       imageUrls,
       aspectRatio,
       duration: Number(duration),
+      audioUrls: voiceClipUrl ? [voiceClipUrl] : [],
+      model: model.id,
     };
     await db
       .update(schema.videoGenerations)

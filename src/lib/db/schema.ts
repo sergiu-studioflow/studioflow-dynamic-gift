@@ -455,6 +455,23 @@ export const characters = pgTable("characters", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Voices offered in Video Generation (0016), synced from the agency's ElevenLabs account. The preview
+// clip is re-hosted on R2 as audio/mpeg (ElevenLabs serves it as text/plain, which Kie rejects) and sent
+// to Seedance as reference audio, which sets the speaker's accent and voice without touching the prompt.
+export const videoVoices = pgTable("video_voices", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  voiceId: text("voice_id").notNull().unique(),
+  name: text("name").notNull(),
+  gender: text("gender"),
+  age: text("age"),
+  accent: text("accent"),
+  description: text("description"),
+  previewUrl: text("preview_url").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const scenes = pgTable("scenes", {
   id: uuid("id").primaryKey().defaultRandom(),
   clientId: uuid("client_id").notNull().references(() => brands.id, { onDelete: "cascade" }),
@@ -489,7 +506,12 @@ export const videoGenerations = pgTable("video_generations", {
     imageUrls: string[];
     aspectRatio: string;
     duration: number;
+    audioUrls?: string[];
+    model?: string;
   }>(),
+  // Voice + model choice (0016). voiceId is an ElevenLabs voice id from video_voices; null = model's own voice.
+  voiceId: text("voice_id"),
+  videoModel: text("video_model").notNull().default("seedance-2"),
   videoUrl: text("video_url"),
   status: text("status").notNull().default("pending"),
   errorMessage: text("error_message"),

@@ -456,7 +456,7 @@ export const characters = pgTable("characters", {
 });
 
 // Voices offered in Video Generation (0016), synced from the agency's ElevenLabs account. The preview
-// clip is re-hosted on R2 as audio/mpeg (ElevenLabs serves it as text/plain, which Kie rejects) and sent
+// clip is re-hosted on R2 with a real audio type (ElevenLabs serves it as text/plain, which Kie rejects) and sent
 // to Seedance as reference audio, which sets the speaker's accent and voice without touching the prompt.
 export const videoVoices = pgTable("video_voices", {
   id: uuid("id").primaryKey().defaultRandom(),

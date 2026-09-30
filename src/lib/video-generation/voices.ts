@@ -4,7 +4,7 @@
  * A voice's preview clip is passed to Seedance as reference audio: tested 30 Sep 2026, it switched
  * the spoken accent from American to Australian (Seedance 2.0 and 2.5) with no prompt change, and
  * costs no ElevenLabs credits. ElevenLabs serves previews as text/plain, which Kie rejects, so each
- * clip is re-hosted on R2 as audio/mpeg.
+ * clip is re-hosted on R2 with a real audio content type.
  */
 
 import { db, schema } from "@/lib/db";
@@ -39,9 +39,16 @@ function normaliseAccent(raw: string | undefined, name: string): string | null {
   return accent || null;
 }
 
-function isMp3(buf: Buffer): boolean {
-  // ID3 tag, or an MPEG audio frame sync.
-  return buf.length > 1024 && ((buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) || (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0));
+/** Previews are mostly mp3, some WAV (e.g. "Australian Steve"); Kie accepts both. Anything else is skipped. */
+function audioType(buf: Buffer): { ext: string; contentType: string } | null {
+  if (buf.length < 1024) return null;
+  if ((buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) || (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0)) {
+    return { ext: "mp3", contentType: "audio/mpeg" }; // ID3 tag or MPEG frame sync
+  }
+  if (buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WAVE") {
+    return { ext: "wav", contentType: "audio/wav" };
+  }
+  return null;
 }
 
 /**
@@ -70,11 +77,12 @@ export async function syncVoices(): Promise<{ synced: number; skipped: string[];
     try {
       const clip = await fetch(v.preview_url, { signal: AbortSignal.timeout(20_000) });
       const buf = Buffer.from(await clip.arrayBuffer());
-      if (!clip.ok || !isMp3(buf)) {
-        skipped.push(`${v.name} (preview not an mp3)`);
+      const type = clip.ok ? audioType(buf) : null;
+      if (!type) {
+        skipped.push(`${v.name} (preview is not mp3 or wav)`);
         return;
       }
-      const previewUrl = await uploadToR2(`${VOICE_PREFIX}/${v.voice_id}.mp3`, buf, "audio/mpeg");
+      const previewUrl = await uploadToR2(`${VOICE_PREFIX}/${v.voice_id}.${type.ext}`, buf, type.contentType);
       const labels = v.labels ?? {};
       const row = {
         name: v.name.trim(),

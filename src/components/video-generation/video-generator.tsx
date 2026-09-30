@@ -36,6 +36,7 @@ import { useGenerationTracker } from "@/lib/video-generation/generation-tracker"
 import { VIDEO_MODELS, DEFAULT_VIDEO_MODEL, getVideoModel, estimateVideoCredits, type VideoModelId } from "@/lib/video-generation/video-models";
 import type { VoiceOption } from "@/lib/video-generation/voices";
 import { VoicePicker } from "@/components/video-generation/voice-picker";
+import { scriptMentionsProduct, PRODUCT_REQUIRED_MESSAGE } from "@/lib/video-generation/script-checks";
 
 type Product = {
   id: string;
@@ -259,7 +260,10 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
 
   const hasVideoImage = (p: Product) => !!p.videoImageUrl;
   const isProcessing = state.phase === "pipeline" || state.phase === "generating";
+  // Same rule as the server: a script about "the product" needs one selected, or the model invents one.
+  const needsProduct = showProducts && !selectedProductId && scriptMentionsProduct(script);
   const canGenerate =
+    !needsProduct &&
     (productOptional || (selectedProductId && selectedProduct?.videoImageUrl)) &&
     (selectedType === "ugc" || selectedType === "broll" || (isAroll && selectedArollStyle)) &&
     script.trim() &&
@@ -1075,7 +1079,7 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
             disabled={isProcessing}
             placeholder={isAroll
               ? "Describe the street interview scene... e.g. 'A street interview about a new energy drink. The interviewer asks a passerby what keeps them going during long workdays.'"
-              : "Describe the scene and include the script... e.g. 'A girl in a bright bathroom holding the product, smiling at camera. Script: Adding this serum to my nighttime routine was the best decision.'"
+              : "Describe the scene and include the script... e.g. 'A woman at a fun run finish line holding up the medal, smiling at camera. Script: Our club's custom medals turned out amazing, everyone wants one.'"
             }
             rows={4}
             className={cn(
@@ -1086,6 +1090,12 @@ export function VideoGenerator({ products, onGalleryRefresh }: VideoGeneratorPro
           {script.trim() && (
             <p className="mt-1.5 text-[10px] text-muted-foreground/50">
               {script.trim().length} characters
+            </p>
+          )}
+          {needsProduct && (
+            <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-500">
+              <AlertCircle className="mt-px h-3 w-3 shrink-0" />
+              {PRODUCT_REQUIRED_MESSAGE}
             </p>
           )}
         </section>

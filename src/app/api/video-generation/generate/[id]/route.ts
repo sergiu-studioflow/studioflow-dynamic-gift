@@ -1,9 +1,9 @@
 import { db, schema } from "@/lib/db";
 import { requireAuth, isAuthError } from "@/lib/auth";
-import { eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { pollVideoJob } from "@/lib/video-generation/video-provider";
-import { uploadToR2, toAccessibleUrl, r2KeyFromUrl } from "@/lib/r2";
+import { uploadToR2, toAccessibleUrl, r2KeyFromUrl, deleteFromR2, ownedR2Key } from "@/lib/r2";
 import { getClientStoragePrefix } from "@/lib/client-api-helpers";
 import { enqueueGateReview } from "@/lib/qc/enqueue";
 import {
@@ -204,4 +204,76 @@ export async function GET(
 
   // Pending or other states
   return NextResponse.json(generation);
+}
+
+/** Posts in these states no longer need their media file. */
+const POST_DONE_STATUSES = ["cancelled", "published", "failed"];
+
+/**
+ * DELETE /api/video-generation/generate/[id] — remove a video: its file (only from its own
+ * brand folder — the bucket is shared by every StudioFlow brand), its Quality Control review,
+ * and the row. Mirrors the static-ad delete. Refused while the video is still being made
+ * (a finishing render would write it back) or while a live post publishes from its file.
+ */
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const auth = await requireAuth();
+  if (isAuthError(auth)) return auth;
+  if (auth.portalUser.role === "viewer") {
+    return NextResponse.json({ error: "Viewers cannot delete videos" }, { status: 403 });
+  }
+
+  const { id } = await params;
+  const [generation] = await db
+    .select()
+    .from(schema.videoGenerations)
+    .where(eq(schema.videoGenerations.id, id))
+    .limit(1);
+  if (!generation) {
+    return NextResponse.json({ error: "Video not found" }, { status: 404 });
+  }
+  if (generation.status === "pending" || generation.status === "processing") {
+    return NextResponse.json({ error: "This video is still being made — delete it once it finishes" }, { status: 409 });
+  }
+
+  if (generation.videoUrl) {
+    const [livePost] = await db
+      .select({ status: schema.scheduledPosts.status })
+      .from(schema.scheduledPosts)
+      .where(
+        and(
+          eq(schema.scheduledPosts.mediaUrl, generation.videoUrl),
+          notInArray(schema.scheduledPosts.status, POST_DONE_STATUSES)
+        )
+      )
+      .limit(1);
+    if (livePost) {
+      return NextResponse.json(
+        { error: `This video is in the posting queue (post status: ${livePost.status}). Cancel or remove that post first.` },
+        { status: 409 }
+      );
+    }
+  }
+
+  const key = generation.clientId
+    ? ownedR2Key(generation.videoUrl, await getClientStoragePrefix(generation.clientId))
+    : null;
+  if (key) {
+    try {
+      await deleteFromR2(key);
+    } catch (err) {
+      console.error("[video-generation/delete] R2 cleanup failed:", err);
+    }
+  }
+
+  // gate_reviews has no FK to its source: drop the review first, or QC keeps trying to grade
+  // a video that no longer exists.
+  await db
+    .delete(schema.gateReviews)
+    .where(and(eq(schema.gateReviews.sourceSystem, "video"), eq(schema.gateReviews.sourceId, id)));
+  await db.delete(schema.videoGenerations).where(eq(schema.videoGenerations.id, id));
+
+  return NextResponse.json({ success: true, fileDeleted: !!key });
 }

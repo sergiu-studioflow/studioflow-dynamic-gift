@@ -22,6 +22,7 @@ import {
 import { submitVideoJob, checkVideoBalance, supportsVoicesAndModels, type VideoJobInput } from "@/lib/video-generation/video-provider";
 import { VIDEO_MODELS, DEFAULT_VIDEO_MODEL } from "@/lib/video-generation/video-models";
 import { getVoiceClipUrl } from "@/lib/video-generation/voices";
+import { scriptMentionsProduct, PRODUCT_REQUIRED_MESSAGE } from "@/lib/video-generation/script-checks";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 min timeout for multi-step AI pipeline
@@ -117,6 +118,13 @@ export async function POST(request: NextRequest) {
 
   const isAroll = videoType === "aroll";
   const hasProduct = !!productId;
+
+  // Podcast and talking-head have no product picker (products are only discussed), so only the
+  // modes that offer one can require it.
+  const offersProduct = !(isAroll && (arollStyle === "podcast" || arollStyle === "talking-head"));
+  if (!hasProduct && offersProduct && typeof script === "string" && scriptMentionsProduct(script)) {
+    return NextResponse.json({ error: PRODUCT_REQUIRED_MESSAGE }, { status: 400 });
+  }
 
   // Validate inputs
   if (!isAroll && videoType !== "ugc" && !productId) {
